@@ -1,3 +1,32 @@
+## 0.11.0 (2026-10-12)
+
+### 🩹 Fixes
+
+- A Live Activity layout takes a `bannerSmall` slot, which is drawn where the activity is small: the Smart Stack of a paired Apple Watch from iOS 18 with watchOS 11, and CarPlay from iOS 26. It was a build error before. ([#766](https://github.com/ng-native/ng-native/pull/766))
+- A Tailwind 3 theme colour written as `hsl()` gets the channels a browser prints where one falls on a half: `hsl(300 100% 25%)` is `rgb(128, 0, 128)`, where it was `rgb(128, 0, 127)`. ([#764](https://github.com/ng-native/ng-native/pull/764))
+- A template plural on the web host picks its case by the rules of the app's `LOCALE_ID`, as on iOS and Android, where it was counted by the rules of `en-US` whatever the locale: with `LOCALE_ID` `fr`, a count of 0 renders the `one` case. ([#772](https://github.com/ng-native/ng-native/pull/772))
+- A template ICU plural or select now renders on the web host in a development build, where it threw `ASSERTION ERROR: The provided value must be an instance of a DOM Node`. ([#773](https://github.com/ng-native/ng-native/pull/773))
+
+  Angular's development checks on the i18n path test each node with `instanceof Node`, and the web host hands Angular its own node objects rather than DOM nodes. The web host now makes the page's `Node` answer `true` for those objects, in development and release builds, as the `Node` global already does on iOS and Android, and answers as before for every other value. A component compiled just in time in a development build no longer logs `NG0303: Can't bind to ...` for its own bindings on the web host.
+
+- A tab bar kept as one screen with `reuseScreen` under a route with a parameter, such as `org/:org`, opens a tab in the account in front. ([#774](https://github.com/ng-native/ng-native/pull/774))
+
+  Each tab remembers the url it was last on, and a tap on it, or Android's back to the first tab, went back to that url. Once the app moved from `/org/1/home` to `/org/2/home`, the same bar stayed on screen and a tap on Search still went to `/org/1/search/x`. A tab now goes back to its remembered url only while that url is still inside the bar, and to its own first page otherwise.
+
+- Tapping back to the tab in front while a tap on another tab is still loading (a guard or lazy code) now stays on the tab in front, instead of the other tab opening when it finishes loading. ([#761](https://github.com/ng-native/ng-native/pull/761))
+- `DeepLinks` has an `openSettings()`, which opens the app's own page in the system settings: where to send a person once a permission's `blocked()` is true. ([#776](https://github.com/ng-native/ng-native/pull/776), [#775](https://github.com/ng-native/ng-native/issues/775))
+
+  Android has no url for that page, so `open()` could not reach it. `DeepLinkSource` gains an optional `openSettings`; a source without one, as a test's stand-in written before now, opens nothing.
+
+- `liveActivity()` takes a `staleDate` option, which answers when what the activity shows is out of date: iOS then draws the layout with `environment().isStale` true. A Live Activity's layout reads what it is drawn in from an `environment` input, as a home-screen widget's does. ([#767](https://github.com/ng-native/ng-native/pull/767))
+- `pushToStartToken()` from `@ng-native/expo/live-activity` is the token a server starts a Live Activity with over APNs while the app is closed: a signal, null until iOS issues one. It needs iOS 17.2 and `enablePushNotifications` in the `expo-widgets` plugin's config. ([#765](https://github.com/ng-native/ng-native/pull/765))
+- `widget()` takes a `timeline` option: the entries a home-screen widget shows later, each from its date, with the app closed. Taps are collected from every entry of a timeline, where only the last entry's were before. ([#768](https://github.com/ng-native/ng-native/pull/768))
+
+### ❤️ Thank You
+
+- Ashley Hunter
+- erKam @erkamyaman
+
 ## 0.10.0 (2026-10-10)
 
 ### 🩹 Fixes
