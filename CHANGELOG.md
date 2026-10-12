@@ -1,3 +1,21 @@
+## 0.12.0 (2026-10-12)
+
+### 🩹 Fixes
+
+- A DOM component's page has a `localStorage` and a `sessionStorage` on Android, where reading either threw, so web code that reads one as it starts failed the page before anything rendered. ([#779](https://github.com/ng-native/ng-native/pull/779), [#778](https://github.com/ng-native/ng-native/issues/778))
+
+  Expo's Android web view leaves DOM storage off and answers `null` for both. The page now gets one of each kept in memory, with storage's methods (`getItem`, `setItem`, `removeItem`, `clear`, `key`, `length`), before any of its own code runs. What is stored lasts as long as the page: it is not kept between launches, as the web view's own is on iOS.
+
+- A font or an image a DOM component's stylesheet names in a relative `url()` ships with the page in a release build, where it was left out and the page fell back to another font. ([#781](https://github.com/ng-native/ng-native/pull/781), [#777](https://github.com/ng-native/ng-native/issues/777))
+
+  `expo export:embed` wrote the stylesheet as it was and none of the files it referred to. Each such file is now written into the page's folder in `www.bundle`, and the `url()` points at it. `withAngularNative` adds `woff` and `woff2` to Metro's `assetExts`, as only a file Metro takes as an asset is exported; a `url()` to any other file keeps Expo's warning.
+
+- `registerViewName` takes a `looseText` option naming the element that draws text written straight into a view, for a native view such as an SVG text whose words are drawn by a span and not by a paragraph. ([#780](https://github.com/ng-native/ng-native/pull/780))
+
+### ❤️ Thank You
+
+- Ashley Hunter
+
 ## 0.11.0 (2026-10-12)
 
 ### 🩹 Fixes
