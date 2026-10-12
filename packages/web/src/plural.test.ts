@@ -1,47 +1,125 @@
-/**
- * A template plural on the web picks its case by the rules of `LOCALE_ID`, as Angular's own
- * bootstrap makes it: zero is `one` in French and `other` in English.
- *
- * Development mode is off before Angular loads, because in it the web host's anchor fails
- * Angular's `assertDomNode` in `applyIcuSwitchCase` (the other half of #686).
- */
+import '@angular/localize/init';
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import { afterEach, before, describe, it } from 'node:test';
+import type { ComponentRef, Type } from '@angular/core';
 import { installJsdomEnvironment } from './jsdom-env.ts';
 
-describe('a template plural, on the web', () => {
-  const global = globalThis as { ngDevMode?: unknown };
-  const hadDevMode = 'ngDevMode' in global;
-  const originalDevMode = global.ngDevMode;
-  let root: HTMLElement;
-  let restoreLocale = () => {};
+type Fixtures = typeof import('./plural-app.ts');
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+const text = (root: HTMLElement) => root.textContent?.replace(/\s+/g, ' ').trim();
+
+describe('an ICU plural, on the web, in a development build', () => {
+  let document: Document;
+  let mount: typeof import('./mount.ts').mount;
+  let fixtures: Fixtures;
+  const mounted: ComponentRef<unknown>[] = [];
 
   before(async () => {
-    global.ngDevMode = false;
+    ({ document } = installJsdomEnvironment());
+    [{ mount }, fixtures] = await Promise.all([import('./mount.ts'), import('./plural-app.ts')]);
+  });
+
+  afterEach(() => {
+    for (const ref of mounted.splice(0)) ref.destroy();
+  });
+
+  function mountApp<T>(component: Type<T>): { root: HTMLElement; ref: ComponentRef<T> } {
+    const root = document.createElement('app-root');
+    document.body.appendChild(root);
+    const ref = mount(root, component).componentRef as ComponentRef<T>;
+    mounted.push(ref);
+    return { root, ref };
+  }
+
+  it('renders the case for the count, and switches case both ways', async () => {
+    const { root, ref } = mountApp(fixtures.PluralApp);
+    assert.equal(text(root), '1 result');
+    ref.instance.count.set(3);
+    await settle();
+    assert.equal(text(root), '3 results');
+    ref.instance.count.set(1);
+    await settle();
+    assert.equal(text(root), '1 result');
+  });
+
+  it('renders a plural next to an element in the same message', async () => {
+    const { root, ref } = mountApp(fixtures.PluralBesideElementApp);
+    assert.equal(text(root), 'Found 1 match');
+    ref.instance.count.set(2);
+    await settle();
+    assert.equal(text(root), 'Found 2 matches');
+  });
+
+  it('takes a plural down with the view it is in', async () => {
+    const { root, ref } = mountApp(fixtures.PluralInViewApp);
+    assert.equal(text(root), 'one left');
+    ref.instance.shown.set(false);
+    await settle();
+    assert.equal(text(root), '');
+    ref.instance.shown.set(true);
+    await settle();
+    assert.equal(text(root), 'one left');
+  });
+
+  it('answers instanceof Node for its own nodes only, and leaves Element alone', () => {
+    const { ref } = mountApp(fixtures.PluralApp);
+    const wrapper = ref.location.nativeElement as object;
+    assert.ok(wrapper instanceof Node);
+    assert.ok(!(wrapper instanceof Element));
+    assert.ok(document.createComment('') instanceof Node);
+    assert.ok(!(document.createTextNode('') instanceof Element));
+    assert.ok(!({} instanceof Node));
+  });
+
+  it('picks the case by the rules of LOCALE_ID, not of en-US', async () => {
+    const [{ registerLocaleData }, { default: localeFr }, core] = await Promise.all([
+      import('@angular/common'),
+      import('@angular/common/locales/fr'),
+      import('@angular/core'),
+    ]);
+    registerLocaleData(localeFr);
+    try {
+      const root = document.createElement('app-root');
+      document.body.appendChild(root);
+      const { componentRef } = mount(root, fixtures.PluralApp, {
+        providers: [{ provide: core.LOCALE_ID, useValue: 'fr' }],
+      });
+      mounted.push(componentRef);
+      (componentRef.instance as InstanceType<Fixtures['PluralApp']>).count.set(0);
+      await settle();
+      assert.equal(text(root), '0 result');
+    } finally {
+      core.ɵsetLocaleId(core.ɵDEFAULT_LOCALE_ID);
+    }
+  });
+});
+
+describe('an ICU plural, on the web, in a release build', () => {
+  const scope = globalThis as { ngDevMode?: unknown };
+
+  it('renders, and its nodes still answer instanceof Node as on iOS and Android', async () => {
+    const before = scope.ngDevMode;
     const { document } = installJsdomEnvironment();
-    await import('@angular/localize/init');
-    const [{ registerLocaleData }, { default: localeFr }, core, { mount }, { PluralApp }] =
-      await Promise.all([
-        import('@angular/common'),
-        import('@angular/common/locales/fr'),
-        import('@angular/core'),
+    scope.ngDevMode = false;
+    try {
+      const [{ mount }, { PluralApp }] = await Promise.all([
         import('./mount.ts'),
         import('./plural-app.ts'),
       ]);
-    registerLocaleData(localeFr);
-    restoreLocale = () => core.ɵsetLocaleId(core.ɵDEFAULT_LOCALE_ID);
-    root = document.createElement('app-root');
-    document.body.appendChild(root);
-    mount(root, PluralApp, { providers: [{ provide: core.LOCALE_ID, useValue: 'fr' }] });
-  });
-
-  after(() => {
-    restoreLocale();
-    if (hadDevMode) global.ngDevMode = originalDevMode;
-    else delete global.ngDevMode;
-  });
-
-  it('picks the case by the rules of LOCALE_ID, not of en-US', () => {
-    assert.equal(root.textContent?.trim(), '0 result');
+      const root = document.createElement('app-root');
+      document.body.appendChild(root);
+      const { componentRef } = mount(root, PluralApp);
+      try {
+        (componentRef.instance as InstanceType<typeof PluralApp>).count.set(2);
+        await settle();
+        assert.equal(text(root), '2 results');
+        assert.ok((componentRef.location.nativeElement as object) instanceof Node);
+      } finally {
+        componentRef.destroy();
+      }
+    } finally {
+      scope.ngDevMode = before;
+    }
   });
 });
