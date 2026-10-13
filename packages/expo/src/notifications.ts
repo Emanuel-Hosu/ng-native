@@ -34,7 +34,15 @@
  * The push token methods ask for the permission first, since a token nobody can be shown anything
  * with fails silently: the push simply never arrives.
  */
-import { DestroyRef, InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
+import {
+  DestroyRef,
+  ErrorHandler,
+  InjectionToken,
+  Service,
+  inject,
+  signal,
+  type Signal,
+} from '@angular/core';
 import type {
   DevicePushToken,
   Notification,
@@ -150,11 +158,13 @@ export class Notifications {
     // then fails silently rather than delivering anything. This is the only way to find out.
     // Expo Go on Android has had no push since SDK 53, and there the module throws on this call
     // rather than answering nothing: caught, so that an app that only shows local notifications
-    // (or none yet) still starts there, and every other listener above keeps working.
+    // (or none yet) still starts there, and every other listener above keeps working. That one
+    // is expected and says nothing; any other failure still goes to the app's ErrorHandler.
     try {
       subscriptions.push(native.addPushTokenListener((token) => this.rolled.set(token)));
-    } catch {
-      // no push on this platform: the token never rolls
+    } catch (failure) {
+      if (!refusesPushInExpoGo(failure))
+        inject(ErrorHandler, { optional: true })?.handleError(failure);
     }
     inject(DestroyRef).onDestroy(() => subscriptions.forEach((one) => one.remove()));
     // The response that launched the app happened before anything was listening, so it has to be
@@ -396,4 +406,9 @@ export class Notifications {
   async unregisterTask(name: string): Promise<void> {
     await this.native?.unregisterTaskAsync(name);
   }
+}
+
+/** `expo-notifications`' own error for push in Expo Go on Android, where push is gone since SDK 53. */
+function refusesPushInExpoGo(failure: unknown): boolean {
+  return failure instanceof Error && failure.message.includes('Expo Go');
 }

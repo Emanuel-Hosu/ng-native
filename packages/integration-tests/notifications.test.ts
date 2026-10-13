@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { Injector, runInInjectionContext } from '@angular/core';
+import { ErrorHandler, Injector, runInInjectionContext } from '@angular/core';
 import type { DevicePushToken, NotificationResponse } from 'expo-notifications';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -17,7 +17,7 @@ import {
   TriggerType,
   type NativeNotifications,
 } from '@ng-native/expo/notifications';
-import { serviceWith } from './injected.ts';
+import { serviceWith, servicesWith } from './injected.ts';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -398,18 +398,42 @@ describe('push tokens', () => {
     assert.equal(await n.getDevicePushToken(), null);
   });
 
-  it('still starts where the module refuses push, as Expo Go on Android does', () => {
-    // Since SDK 53, expo-notifications throws from addPushTokenListener in Expo Go on Android.
+  const refusingPush = (failure: Error) => {
+    const errors: unknown[] = [];
     const native = Object.assign(platform(), {
       addPushTokenListener: () => {
-        throw new Error('expo-notifications: Android Push notifications ... removed from Expo Go');
+        throw failure;
       },
     });
-    const n = serviceOn(native);
+    const n = servicesWith(
+      [
+        [Notifications.SOURCE, native],
+        [ErrorHandler, { handleError: (error: unknown) => errors.push(error) }],
+      ],
+      () => new Notifications(),
+    );
+    return { native, n, errors };
+  };
+
+  it('still starts where the module refuses push, as Expo Go on Android does', () => {
+    // Since SDK 53, expo-notifications throws from addPushTokenListener in Expo Go on Android.
+    const { native, n, errors } = refusingPush(
+      new Error('expo-notifications: Android Push notifications ... removed from Expo Go'),
+    );
 
     native.emit('received', { request: { identifier: 'local', content: {} } });
     assert.equal(n.latest()?.request.identifier, 'local', 'the other listeners still work');
     assert.equal(n.devicePushToken(), null);
+    assert.deepEqual(errors, [], 'expected there, so nothing to report');
+  });
+
+  it('still starts, but reports it, when the push token listener fails for another reason', () => {
+    const failure = new Error('native module crashed');
+    const { native, n, errors } = refusingPush(failure);
+
+    native.emit('received', { request: { identifier: 'local', content: {} } });
+    assert.equal(n.latest()?.request.identifier, 'local');
+    assert.deepEqual(errors, [failure]);
   });
 
   it('observes the device token changing while the app runs', () => {
