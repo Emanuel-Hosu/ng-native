@@ -398,6 +398,20 @@ describe('push tokens', () => {
     assert.equal(await n.getDevicePushToken(), null);
   });
 
+  it('still starts where the module refuses push, as Expo Go on Android does', () => {
+    // Since SDK 53, expo-notifications throws from addPushTokenListener in Expo Go on Android.
+    const native = Object.assign(platform(), {
+      addPushTokenListener: () => {
+        throw new Error('expo-notifications: Android Push notifications ... removed from Expo Go');
+      },
+    });
+    const n = serviceOn(native);
+
+    native.emit('received', { request: { identifier: 'local', content: {} } });
+    assert.equal(n.latest()?.request.identifier, 'local', 'the other listeners still work');
+    assert.equal(n.devicePushToken(), null);
+  });
+
   it('observes the device token changing while the app runs', () => {
     const native = platform();
     const n = serviceOn(native);

@@ -145,10 +145,17 @@ export class Notifications {
       // Android drops notifications when too many arrive at once while the app is not running;
       // this is the only word that any went missing.
       native.addNotificationsDroppedListener(() => this.drops.update((count) => count + 1)),
-      // A device push token can be rolled by the platform while the app is running; the old one
-      // then fails silently rather than delivering anything. This is the only way to find out.
-      native.addPushTokenListener((token) => this.rolled.set(token)),
     ];
+    // A device push token can be rolled by the platform while the app is running; the old one
+    // then fails silently rather than delivering anything. This is the only way to find out.
+    // Expo Go on Android has had no push since SDK 53, and there the module throws on this call
+    // rather than answering nothing: caught, so that an app that only shows local notifications
+    // (or none yet) still starts there, and every other listener above keeps working.
+    try {
+      subscriptions.push(native.addPushTokenListener((token) => this.rolled.set(token)));
+    } catch {
+      // no push on this platform: the token never rolls
+    }
     inject(DestroyRef).onDestroy(() => subscriptions.forEach((one) => one.remove()));
     // The response that launched the app happened before anything was listening, so it has to be
     // asked for rather than waited for. Without this a cold start from a notification does
