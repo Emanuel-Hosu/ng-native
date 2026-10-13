@@ -34,22 +34,14 @@
  * The push token methods ask for the permission first, since a token nobody can be shown anything
  * with fails silently: the push simply never arrives.
  */
-import {
-  DestroyRef,
-  ErrorHandler,
-  InjectionToken,
-  Service,
-  inject,
-  signal,
-  type Signal,
-} from '@angular/core';
+import { DestroyRef, InjectionToken, Service, inject, signal, type Signal } from '@angular/core';
 import type {
   DevicePushToken,
   Notification,
   NotificationResponse,
   SchedulableTriggerInputTypes,
 } from 'expo-notifications';
-import { expoModule } from './native.ts';
+import { currentPlatform, expoModule, optional } from './native.ts';
 import { Permission, UNAVAILABLE } from './permissions.ts';
 
 type Expo = typeof import('expo-notifications');
@@ -123,7 +115,13 @@ export class Notifications {
   static readonly SOURCE = new InjectionToken<NativeNotifications | null>(
     'angular-native.notificationsSource',
     {
-      factory: () => expoModule('expo-notifications', () => require('expo-notifications') as Expo),
+      factory: () => {
+        if (refusedByExpoGo()) {
+          console.warn(REFUSED_BY_EXPO_GO);
+          return null;
+        }
+        return expoModule('expo-notifications', () => require('expo-notifications') as Expo);
+      },
     },
   );
 
@@ -153,19 +151,10 @@ export class Notifications {
       // Android drops notifications when too many arrive at once while the app is not running;
       // this is the only word that any went missing.
       native.addNotificationsDroppedListener(() => this.drops.update((count) => count + 1)),
+      // A device push token can be rolled by the platform while the app is running; the old one
+      // then fails silently rather than delivering anything. This is the only way to find out.
+      native.addPushTokenListener((token) => this.rolled.set(token)),
     ];
-    // A device push token can be rolled by the platform while the app is running; the old one
-    // then fails silently rather than delivering anything. This is the only way to find out.
-    // Expo Go on Android has had no push since SDK 53, and there the module throws on this call
-    // rather than answering nothing: caught, so that an app that only shows local notifications
-    // (or none yet) still starts there, and every other listener above keeps working. That one
-    // is expected and says nothing; any other failure still goes to the app's ErrorHandler.
-    try {
-      subscriptions.push(native.addPushTokenListener((token) => this.rolled.set(token)));
-    } catch (failure) {
-      if (!refusesPushInExpoGo(failure))
-        inject(ErrorHandler, { optional: true })?.handleError(failure);
-    }
     inject(DestroyRef).onDestroy(() => subscriptions.forEach((one) => one.remove()));
     // The response that launched the app happened before anything was listening, so it has to be
     // asked for rather than waited for. Without this a cold start from a notification does
@@ -408,7 +397,23 @@ export class Notifications {
   }
 }
 
-/** `expo-notifications`' own error for push in Expo Go on Android, where push is gone since SDK 53. */
-function refusesPushInExpoGo(failure: unknown): boolean {
-  return failure instanceof Error && failure.message.includes('Expo Go');
+/**
+ * Whether this is Expo Go on Android, where `expo-notifications` cannot be imported.
+ *
+ * The package subscribes to push tokens as it is imported, and in Expo Go on Android, which has
+ * had no push since SDK 53, that subscription throws. So the import fails there, local
+ * notifications included, and no rebuild puts it right. Asked before the import and not caught
+ * after it: Metro reports a module that throws as it loads as a fatal error itself, so the red
+ * screen is up before anything here could catch it. With no module the service is what it is on
+ * the web, and the app gets past the first screen that injects it.
+ */
+function refusedByExpoGo(): boolean {
+  if (currentPlatform() !== 'android') return false;
+  const expo = optional(() => require('expo') as { isRunningInExpoGo?(): boolean });
+  return expo?.isRunningInExpoGo?.() === true;
 }
+
+const REFUSED_BY_EXPO_GO =
+  '[angular-native] Notifications does nothing here: expo-notifications cannot be loaded in Expo ' +
+  'Go on Android, which has had no push since SDK 53, so nothing is scheduled or received and ' +
+  'the permission is never granted. Use a development build.';

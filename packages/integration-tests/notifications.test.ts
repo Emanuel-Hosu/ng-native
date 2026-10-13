@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { ErrorHandler, Injector, runInInjectionContext } from '@angular/core';
+import { Injector, runInInjectionContext } from '@angular/core';
 import type { DevicePushToken, NotificationResponse } from 'expo-notifications';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -17,7 +17,7 @@ import {
   TriggerType,
   type NativeNotifications,
 } from '@ng-native/expo/notifications';
-import { serviceWith, servicesWith } from './injected.ts';
+import { serviceWith } from './injected.ts';
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -398,44 +398,6 @@ describe('push tokens', () => {
     assert.equal(await n.getDevicePushToken(), null);
   });
 
-  const refusingPush = (failure: Error) => {
-    const errors: unknown[] = [];
-    const native = Object.assign(platform(), {
-      addPushTokenListener: () => {
-        throw failure;
-      },
-    });
-    const n = servicesWith(
-      [
-        [Notifications.SOURCE, native],
-        [ErrorHandler, { handleError: (error: unknown) => errors.push(error) }],
-      ],
-      () => new Notifications(),
-    );
-    return { native, n, errors };
-  };
-
-  it('still starts where the module refuses push, as Expo Go on Android does', () => {
-    // Since SDK 53, expo-notifications throws from addPushTokenListener in Expo Go on Android.
-    const { native, n, errors } = refusingPush(
-      new Error('expo-notifications: Android Push notifications ... removed from Expo Go'),
-    );
-
-    native.emit('received', { request: { identifier: 'local', content: {} } });
-    assert.equal(n.latest()?.request.identifier, 'local', 'the other listeners still work');
-    assert.equal(n.devicePushToken(), null);
-    assert.deepEqual(errors, [], 'expected there, so nothing to report');
-  });
-
-  it('still starts, but reports it, when the push token listener fails for another reason', () => {
-    const failure = new Error('native module crashed');
-    const { native, n, errors } = refusingPush(failure);
-
-    native.emit('received', { request: { identifier: 'local', content: {} } });
-    assert.equal(n.latest()?.request.identifier, 'local');
-    assert.deepEqual(errors, [failure]);
-  });
-
   it('observes the device token changing while the app runs', () => {
     const native = platform();
     const n = serviceOn(native);
@@ -443,5 +405,62 @@ describe('push tokens', () => {
 
     native.emit('pushToken', { type: 'ios', data: 'rolled-token' });
     assert.deepEqual(n.devicePushToken(), { type: 'ios', data: 'rolled-token' });
+  });
+});
+
+describe('where expo-notifications will not load: Expo Go on Android', () => {
+  // `expo-notifications` subscribes to push tokens as it is imported, and in Expo Go on Android,
+  // which has had no push since SDK 53, that throws. So the import itself fails there, and Metro
+  // reports it as a fatal error before a `catch` around the `require` runs.
+  const module = { addNotificationReceivedListener() {} };
+
+  /** The token's own default factory on a device, and what it warned and asked `require` for. */
+  function source(platform: 'ios' | 'android', expoGo: boolean) {
+    const host = globalThis as Record<string, unknown>;
+    const warnings: string[] = [];
+    const required: string[] = [];
+    const warn = console.warn;
+    console.warn = (message: unknown) => warnings.push(String(message));
+    host['require'] = (id: string) => {
+      required.push(id);
+      if (id === 'react-native') return { Platform: { OS: platform } };
+      if (id === 'expo') return { isRunningInExpoGo: () => expoGo };
+      if (id === 'expo-modules-core') return { requireOptionalNativeModule: () => ({}) };
+      if (id === 'expo-notifications') return module;
+      throw new Error(`Cannot find module '${id}'`);
+    };
+    try {
+      const provider = (Notifications.SOURCE as unknown as { ɵprov: { factory(): unknown } }).ɵprov;
+      return { native: provider.factory(), warnings, required };
+    } finally {
+      delete host['require'];
+      console.warn = warn;
+    }
+  }
+
+  it('starts with no module behind it, never importing the package, and says why', async () => {
+    const { native, warnings, required } = source('android', true);
+    assert.equal(native, null);
+    assert.ok(!required.includes('expo-notifications'), 'the import is what throws');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0]!, /Expo Go on Android/);
+    assert.match(warnings[0]!, /development build/);
+
+    // With none, the service is what it is on the web: it starts, and answers nothing.
+    const n = serviceWith(Notifications.SOURCE, null, () => new Notifications());
+    assert.equal(n.latest(), null);
+    assert.equal(n.devicePushToken(), null);
+    assert.equal(await n.cancelAll(), undefined);
+  });
+
+  it("loads it in the app's own build on Android, and in Expo Go on iOS", () => {
+    for (const [platform, expoGo] of [
+      ['android', false],
+      ['ios', true],
+    ] as const) {
+      const { native, warnings } = source(platform, expoGo);
+      assert.equal(native, module, `${platform}, Expo Go ${expoGo}`);
+      assert.deepEqual(warnings, []);
+    }
   });
 });

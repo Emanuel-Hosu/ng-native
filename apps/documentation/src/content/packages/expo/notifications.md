@@ -404,6 +404,12 @@ modules - a storage wrapper, an API client - with the app, as long as they do no
 Remote pushes need push credentials (APNs, FCM) and a development build; Expo Go cannot receive
 them on Android.
 
+In Expo Go on Android the service does nothing at all, local notifications included: `expo-
+notifications` cannot be imported there since Expo SDK 53. `Notifications` starts with no module
+behind it, as it does on the web, so the app runs, nothing is scheduled or received, the permission
+is never granted, and a warning in the console says so. Expo Go on iOS is not affected. Use a
+development build to work on notifications for Android.
+
 ## Custom notification UI
 
 What a notification looks like when expanded, and changing a push before it is shown (attaching an
