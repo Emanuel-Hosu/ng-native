@@ -47,8 +47,7 @@ Loading a language after rendering does not update existing templates; switching
 an app reload. Metro has no build-time translation (`localize-translate`), and `ng extract-i18n`
 cannot build native apps.
 
-Plurals and selects work on iOS and Android. On the [web host](/packages/web) one throws in a
-development build; use the `i18nPlural` pipe and `@switch` there.
+Plurals and selects work on iOS, Android and the [web host](/packages/web).
 
 A case of a plural or select holds text and interpolations. Angular keeps an element inside a case
 only when it is on its HTML allowlist, which no native element is, so `<text>` inside a case is

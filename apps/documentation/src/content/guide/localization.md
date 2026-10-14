@@ -126,9 +126,8 @@ A label built in code is a `$localize` string, bound as any other value:
 
 ### Plurals and selects
 
-An ICU expression chooses between messages by a number or a string, on iOS and Android; for the
-web host see [Known limitations](/guide/limitations#i18n-is-runtime-only). Give it an element of
-its own, so the whole expression is one message under your ID:
+An ICU expression chooses between messages by a number or a string, on iOS, Android and the web
+host. Give it an element of its own, so the whole expression is one message under your ID:
 
 ```html
 <text i18n="@@basket.count"

@@ -49,3 +49,12 @@ export class PluralInViewApp {
   readonly count = signal(1);
   readonly shown = signal(true);
 }
+
+@Component({
+  selector: 'app-select',
+  imports: [Text],
+  template: ` <text i18n="@@role">{role(), select, admin {Administrator} other {Guest}}</text> `,
+})
+export class SelectApp {
+  readonly role = signal('admin');
+}

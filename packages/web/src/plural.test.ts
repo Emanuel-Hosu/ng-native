@@ -43,6 +43,17 @@ describe('an ICU plural, on the web, in a development build', () => {
     assert.equal(text(root), '1 result');
   });
 
+  it('renders the case for the value of a select, and switches case both ways', async () => {
+    const { root, ref } = mountApp(fixtures.SelectApp);
+    assert.equal(text(root), 'Administrator');
+    ref.instance.role.set('visitor');
+    await settle();
+    assert.equal(text(root), 'Guest');
+    ref.instance.role.set('admin');
+    await settle();
+    assert.equal(text(root), 'Administrator');
+  });
+
   it('renders a plural next to an element in the same message', async () => {
     const { root, ref } = mountApp(fixtures.PluralBesideElementApp);
     assert.equal(text(root), 'Found 1 match');
