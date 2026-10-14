@@ -24,17 +24,19 @@ import { Unread } from './unread.ts';
     <native-tabs-outlet>
       <native-tab
         path="library"
-        title="Library"
+        title="Library 3"
         [icon]="libraryIcon"
         [standardAppearance]="appearance"
       />
       <!-- A require()d image rather than a symbol, drawn as a mask so it tints like one.
            A bar item never scales its image, so the asset is icon-sized at 1x, 2x and 3x. -->
+      <!-- TRY: the iOS 26 search tab. Flip these two and reload to compare. -->
       <native-tab
         path="search"
-        title="Search"
-        [icon]="{ template: searchIcon }"
-        [selectedIcon]="{ template: searchIconSelected }"
+        [systemItem]="trySystem"
+        [title]="trySystem ? undefined : 'Search'"
+        [role]="tryRole"
+        [automaticallyActivatesSearch]="tryAuto"
       />
       <native-tab path="profile" title="Profile" [icon]="profileIcon" [badge]="badge()" />
     </native-tabs-outlet>
@@ -58,6 +60,10 @@ export class TabsPage {
     'person.crop.circle',
     require('../../../assets/tab-profile.png'),
   );
+
+  protected readonly trySystem: 'search' | undefined = 'search';
+  protected readonly tryRole: 'search' | undefined = 'search';
+  protected readonly tryAuto = false;
 
   protected readonly searchIcon = require('../../../assets/tab-search.png');
   // Native carries one iconType for both states, so the selected icon has to be a template too.

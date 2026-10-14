@@ -315,7 +315,13 @@ export const routes: Routes = [
       },
       {
         path: 'search',
-        loadComponent: () => import('./tabs/tab-plain.ts').then((m) => m.TabSearch),
+        loadComponent: () => import('./tabs/tab-search-stack.ts').then((m) => m.TabSearchStack),
+        children: [
+          {
+            path: '',
+            loadComponent: () => import('./tabs/tab-search-stack.ts').then((m) => m.SearchList),
+          },
+        ],
       },
       {
         path: 'profile',
