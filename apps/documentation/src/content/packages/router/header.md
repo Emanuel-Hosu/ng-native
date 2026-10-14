@@ -58,8 +58,9 @@ back with the same header in place.
 
 `<native-header-item>` places arbitrary Angular content - not just text - into one of the bar's
 slots: `left`, `center`/`title`, `right`, `back` (replaces the chevron; needs
-`backButtonInCustomView` on the header), or `searchBar`. Press handling is the ordinary responder
-system, so a `pressable` inside one works like anywhere else.
+`backButtonInCustomView` on the header), or `searchBar`. `title` is committed as `center`, the
+one spelling Android's header takes. Press handling is the ordinary responder system, so a
+`pressable` inside one works like anywhere else.
 
 <!-- api: NativeHeaderItem -->
 
