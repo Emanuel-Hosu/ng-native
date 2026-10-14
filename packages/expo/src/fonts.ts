@@ -28,7 +28,7 @@ import {
   fontsSettled,
   onFontsRegistered,
 } from '@ng-native/fabric';
-import { expoModule } from './native.ts';
+import { expoModule, present } from './native.ts';
 
 /** A face a stylesheet declared, as the compiler collected it. */
 export interface FontFace {
@@ -79,6 +79,8 @@ export function registrationsFor(faces: readonly FontFace[]): Record<string, unk
 export function expoFonts(): NativeFonts | null {
   const expo = expoModule('expo-font', () => require('expo-font') as typeof import('expo-font'));
   if (!expo) return null;
+  // Missing, the stand-in itself: `available` reads false, and a load says what to install.
+  if (!present(expo)) return expo as unknown as NativeFonts;
   return {
     loadAsync: (map) => expo.loadAsync(map as Parameters<typeof expo.loadAsync>[0]),
     isLoaded: (family) => expo.isLoaded(family),
@@ -107,7 +109,7 @@ export class FontRegistry {
 
   /** Whether `expo-font` is installed at all. Without it a custom face simply never appears. */
   get available(): boolean {
-    return this.native !== null;
+    return present(this.native) !== null;
   }
 
   /** Every family the platform can currently find, custom or bundled. */

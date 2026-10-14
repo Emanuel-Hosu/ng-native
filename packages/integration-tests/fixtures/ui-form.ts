@@ -18,7 +18,12 @@ import {
   imports: [FormField, UiDatePicker, UiHost, UiPicker],
   template: `
     <ui-host>
-      <ui-date-picker nativeID="date" title="Arrival" [formField]="f.arrival" />
+      <ui-date-picker
+        nativeID="date"
+        title="Arrival"
+        [displayedComponents]="['date', 'hourAndMinute']"
+        [formField]="f.arrival"
+      />
       <ui-picker
         nativeID="room"
         label="Room"
@@ -26,11 +31,22 @@ import {
         [options]="rooms"
         [formField]="f.room"
       />
+      <ui-picker
+        nativeID="board"
+        label="Board"
+        pickerStyle="segmented"
+        [options]="boards"
+        [formField]="f.board"
+      />
     </ui-host>
   `,
 })
 export class UiForm {
-  readonly data = signal({ arrival: new Date('2026-10-01T09:00:00.000Z'), room: 'double' });
+  readonly data = signal({
+    arrival: new Date('2026-10-01T09:00:00.000Z'),
+    room: 'double',
+    board: 'breakfast',
+  });
   readonly locked = signal(false);
   readonly f = form(this.data, (path) => {
     required(path.room);
@@ -40,6 +56,10 @@ export class UiForm {
     { value: 'single', label: 'Single' },
     { value: 'double', label: 'Double' },
     { value: 'suite', label: 'Suite' },
+  ];
+  readonly boards = [
+    { value: 'none', label: 'Room only' },
+    { value: 'breakfast', label: 'Breakfast' },
   ];
 }
 
@@ -86,3 +106,18 @@ export class UiStatic {}
   `,
 })
 export class UiHosts {}
+
+/** Date pickers showing a date, a time, both, and nothing. */
+@Component({
+  selector: 'x-ui-components',
+  imports: [UiDatePicker, UiHost],
+  template: `
+    <ui-host>
+      <ui-date-picker nativeID="only-date" [displayedComponents]="['date']" />
+      <ui-date-picker nativeID="only-time" [displayedComponents]="['hourAndMinute']" />
+      <ui-date-picker nativeID="both" [displayedComponents]="['date', 'hourAndMinute']" />
+      <ui-date-picker nativeID="none" [displayedComponents]="[]" />
+    </ui-host>
+  `,
+})
+export class UiComponents {}

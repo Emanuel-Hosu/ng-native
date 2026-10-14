@@ -7,7 +7,7 @@ import {
   signal,
   type Signal,
 } from '@angular/core';
-import { expoModule } from './native.ts';
+import { expoModule, present } from './native.ts';
 
 export type WatchPayload = Record<string, unknown>;
 
@@ -133,7 +133,7 @@ export class Watch {
   private readonly transfersState = signal<ReadonlyMap<string, WatchFileEvent>>(new Map());
   private readonly errorState = signal<WatchError | null>(null);
 
-  readonly available = this.native !== null;
+  readonly available = present(this.native) !== null;
   readonly paired: Signal<boolean> = this.pairedState.asReadonly();
   readonly installed: Signal<boolean> = this.installedState.asReadonly();
   readonly reachable: Signal<boolean> = this.reachableState.asReadonly();
@@ -146,7 +146,7 @@ export class Watch {
   readonly error: Signal<WatchError | null> = this.errorState.asReadonly();
 
   constructor() {
-    const native = this.native;
+    const native = present(this.native);
     if (!native) return;
     const events = native.watchEvents;
     const stops: Unsubscribe[] = [
@@ -235,7 +235,8 @@ export class Watch {
 
   update(context: WatchPayload): void {
     if (!this.native) return;
-    if (this.ready) this.native.updateApplicationContext(context);
+    // Missing from the build, the stand-in is called rather than held for later: it says so.
+    if (this.ready || !present(this.native)) this.native.updateApplicationContext(context);
     else this.pendingContext = context;
   }
 
@@ -260,7 +261,7 @@ export class Watch {
   private queue(complication: boolean, userInfo: WatchPayload): void {
     const native = this.native;
     if (!native) return;
-    if (!this.ready) this.pendingTransfers.push([complication, userInfo]);
+    if (!this.ready && present(native)) this.pendingTransfers.push([complication, userInfo]);
     else if (complication) native.transferCurrentComplicationUserInfo(userInfo);
     else native.transferUserInfo(userInfo);
   }

@@ -40,10 +40,12 @@ unloadable by Node at all - Expo's build output uses extensionless relative impo
 pulls in reaches `react-native`, which is Flow.
 
 Where the module exists for the platform the app is on, a missing one is a mistake with a fix, so
-the service throws a `MissingModuleError` rather than quietly doing nothing. That covers a package
-that was never installed, and the more common case of one that was installed after the app was
-last built: a development build, and Expo Go, contain only the native modules they were built
-with. The message names the module and the commands to run:
+using the service throws a `MissingModuleError` rather than quietly doing nothing. Injecting it does
+not throw: a call, or a read of a value only the module knows, does. Whether the feature is there is
+the one question that answers instead: `available` reads `false`, and `available()` resolves to
+`false`. That covers a package that was never installed, and the more common case of one that was
+installed after the app was last built: a development build, and Expo Go, contain only the native
+modules they were built with. The message names the module and the commands to run:
 
 ```text
 expo-haptics is not in this build of the app. Install it with "npx expo install expo-haptics",

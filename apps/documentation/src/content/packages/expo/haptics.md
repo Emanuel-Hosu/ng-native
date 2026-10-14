@@ -50,19 +50,22 @@ export class SaveButton {
 - **`select()`** - a selection changed, the lightest of the three.
 - **`available`** - whether the native module is installed at all.
 
-Every method returns nothing and swallows failures. Expo's own equivalents are all promises, and a
-caller who does not await one gets an unhandled rejection on a device with no Taptic Engine, in a
-simulator, or on an Android build with the vibration permission off - none of which is a reason for
-anything to go wrong on screen. Nobody awaits a vibration, so nothing here surfaces one going
-nowhere; if that ever needs debugging, add logging under `__DEV__` rather than making call sites
-handle a rejection.
+Every method returns nothing and swallows the failures of a vibration. Expo's own equivalents are
+all promises, and a caller who does not await one gets an unhandled rejection on a device with no
+Taptic Engine, in a simulator, or on an Android build with the vibration permission off - none of
+which is a reason for anything to go wrong on screen. Nobody awaits a vibration, so nothing here
+surfaces one going nowhere; if that ever needs debugging, add logging under `__DEV__` rather than
+making call sites handle a rejection. A module missing from the build is not one of those: it
+throws, as below.
 
 ## Without the module
 
-On iOS and Android, a missing `expo-haptics` - never installed, or installed without the app
-being rebuilt since - throws a `MissingModuleError` when the service first reaches for it. Its
-message names the module and the commands that fix it; see
+On iOS and Android, a missing `expo-haptics` - never installed, or installed without the app being
+rebuilt since - leaves the service made, so injecting it does not throw. A call, or a read of a
+value only the module knows, throws a `MissingModuleError`. Its message names the module and the
+commands that fix it; see
 [Using a module](/packages/expo/using-a-module#what-happens-without-the-module-installed).
+`available` is `false`.
 
 On the web, and in a test that provides no fake, every method does nothing. `available` is `false`.
 

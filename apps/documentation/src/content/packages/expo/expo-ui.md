@@ -134,9 +134,12 @@ error. `expo-ui-components.ts` has thin typed components for the views an app re
   A pick is when it emits `touch`. SwiftUI's picker always shows a date, today when the field is
   empty, and the report it makes as it appears is not taken as the user's choice, so an optional
   date is best asked for behind a button that shows the picker. Without a form, `selection` still
-  takes ISO text on iOS.
-- **`UiPicker`** - a SwiftUI `Picker`, iOS only, and a Signal Forms field. `options` draws the
-  choices; see [Choices: `UiPicker`](#choices-uipicker) below.
+  takes ISO text on iOS. `displayedComponents` is a list of `'date'` and `'hourAndMinute'`; an
+  empty list shows nothing on iOS, and the date and time on Android, which has no way to show
+  nothing.
+- **`UiPicker`** - a SwiftUI `Picker` on iOS, Compose's segmented buttons or dropdown menu on
+  Android, and a Signal Forms field. `options` draws the choices;
+  see [Choices: `UiPicker`](#choices-uipicker) below.
 - **`UiBottomSheet`** - the system's sheet on both platforms, opened by its `open` model, with the
   app's own components as its content. It needs no `ui-host`; see
   [A bottom sheet](#a-bottom-sheet) below.
@@ -182,9 +185,9 @@ a modifier it does not know, silently, and knows few of SwiftUI's: `frame`, `fon
 only `start`, `top`, `end` and `bottom`. Choose the modifiers by platform, with `nativePlatform()`
 from `@ng-native/fabric`, where a view needs them on both.
 
-`UiDatePicker` and `UiBottomSheet` already take both platforms, as described under each. The rest
-of the typed components are SwiftUI's. On Android a text field, a menu and an image are different
-controls rather than renamed ones, and `UiPicker`, `UiList`, `UiForm`, `UiSection` and the others
+`UiDatePicker`, `UiPicker` and `UiBottomSheet` take both platforms, as described under each. The
+rest of the typed components are SwiftUI's. On Android a text field, a menu and an image are
+different controls rather than renamed ones, and `UiList`, `UiForm`, `UiSection` and the others
 have no Compose view at all; use Compose's own names for those.
 
 Still call `registerExpoUiViews` alongside importing these. The component supplies the types; the
@@ -307,8 +310,9 @@ than a crash.
 
 ## Choices: `UiPicker`
 
-**`UiPicker`** is a SwiftUI `Picker`: one choice out of a short, fixed list, drawn as a menu, a
-segmented control, a wheel or inline rows. It is a Signal Forms field as it stands, through its
+**`UiPicker`** is a SwiftUI `Picker` on iOS: one choice out of a short, fixed list, drawn as a
+menu, a segmented control, a wheel or inline rows. On Android it is drawn with Compose's own
+controls, described below. It is a Signal Forms field as it stands, through its
 `value` model, so `[formField]` binds it like any other control:
 
 ```ts
@@ -358,10 +362,18 @@ alongside or instead of `options`, for anything richer than a label.
 A pick writes the new value into the model, and so into the form, before `touch`; a report
 whose `selection` is neither a string nor a number is ignored.
 
-**The picker is iOS only.** `registerExpoUiViews('android')` registers no `ui-picker`, because
-`@expo/ui` has no Compose picker of that shape, so on Android the element commits as nothing. An
-app that runs on both needs another control for the choice there. Like every `ui-*` view, it
-sits inside a `<ui-host>`.
+**On Android** Compose has no `Picker`, so the same element draws its `options` with Compose's
+own controls, and the field binds the same way:
+
+- `pickerStyle: 'segmented'` is a row of segmented buttons, the chosen one marked.
+- Any other style is an exposed dropdown menu: the chosen option, or `label` before there is one,
+  with an arrow, and a tap opens the options under it.
+
+`systemImage`, `modifiers` and children are SwiftUI's alone, and are not drawn on Android. The
+Compose pieces are components of their own too, for a layout `UiPicker` does not cover:
+`UiSingleChoiceSegmentedButtonRow`, `UiSegmentedButton`, `UiExposedDropdownMenuBox`,
+`UiExposedDropdownMenu` and `UiDropdownMenuItem`, each Android only. Like every `ui-*` view, the
+picker sits inside a `<ui-host>`.
 
 ## A bottom sheet
 
