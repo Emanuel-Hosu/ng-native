@@ -63,7 +63,7 @@ export class TabsPage {
 
   protected readonly trySystem: 'search' | undefined = 'search';
   protected readonly tryRole: 'search' | undefined = 'search';
-  protected readonly tryAuto = false;
+  protected readonly tryAuto = true;
 
   protected readonly searchIcon = require('../../../assets/tab-search.png');
   // Native carries one iconType for both states, so the selected icon has to be a template too.

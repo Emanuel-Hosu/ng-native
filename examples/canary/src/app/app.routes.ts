@@ -1,5 +1,6 @@
 import type { Routes } from '@angular/router';
 import { signedIn } from './auth/session.ts';
+import { SearchList, TabSearchStack } from './tabs/tab-search-stack.ts';
 
 /**
  * Every feature on its own screen, behind `loadComponent`, which is what a real app does and what
@@ -315,13 +316,8 @@ export const routes: Routes = [
       },
       {
         path: 'search',
-        loadComponent: () => import('./tabs/tab-search-stack.ts').then((m) => m.TabSearchStack),
-        children: [
-          {
-            path: '',
-            loadComponent: () => import('./tabs/tab-search-stack.ts').then((m) => m.SearchList),
-          },
-        ],
+        component: TabSearchStack,
+        children: [{ path: '', component: SearchList }],
       },
       {
         path: 'profile',
