@@ -55,6 +55,12 @@ export interface PresentOptions extends NativeNavigationOptions {
   as?: StackPresentation;
 }
 
+/** Whether commands ask for a query or a fragment, written into a url string or as extras. */
+const asksMore = (commands: NavigationCommands, extras: NavigationExtras): boolean =>
+  (typeof commands === 'string' && /[?#]/.test(commands)) ||
+  extras.queryParams != null ||
+  extras.fragment != null;
+
 /** A url string up to its query or fragment. */
 const pathOf = (url: string): string => url.split(/[?#]/, 1)[0]!;
 
@@ -287,6 +293,11 @@ export class NativeNavigation {
   }
 
   /**
+   * A push to a page of a tab bar that a screen over it covers, pushed on the app's own stack or
+   * presented, goes back to the bar first: to its tab, where that was left, and then pushes the
+   * page there unless the tab is already showing it. One tab bar, as a native app has. Pushed as
+   * it was asked, the page would build a second bar over the screen.
+   *
    * A push into a tab nobody has opened goes to the tab first, so its stack has the tab's own
    * first screen under the page, and a back from the page lands there: what a tab bar with a
    * navigation controller per tab does. Without it the page is the stack's only screen, and the
@@ -300,7 +311,17 @@ export class NativeNavigation {
     navigate: () => Promise<boolean>,
   ): Promise<boolean> {
     if (intent.stack !== 'push' || intent.presentation) return navigate();
-    const tab = this.outlets.unopenedTabOf(this.pathFor(commands, extras));
+    const path = this.pathFor(commands, extras);
+    const left = this.outlets.coveredTabAt(path);
+    if (left) {
+      // The tab is open once the bar is back, so the page goes straight onto it, unless it is the
+      // page the tab was left on and nothing more, a query or a fragment, is asked of it.
+      const asked = pathOf(left) !== path || asksMore(commands, extras);
+      return this.router
+        .navigateByUrl(left)
+        .then((arrived) => (arrived && asked ? navigate() : arrived));
+    }
+    const tab = this.outlets.unopenedTabOf(path);
     if (!tab) return navigate();
     return this.router.navigateByUrl(tab).then((arrived) => (arrived ? navigate() : false));
   }
@@ -315,7 +336,8 @@ export class NativeNavigation {
   }
 
   /**
-   * A page of a tab that is not in front, presented over the one that is: its url would select
+   * A page of a tab that is not in front, presented over the one that is, or over a screen that
+   * covers the bar: its url would select
    * its own tab and show it there, so it goes to the root's presented outlet instead, where the
    * app's own stack shows it over everything. See `presented-route.ts`. Null for a page of the
    * tab in front, or of no tab, which is presented where its url puts it.
@@ -326,7 +348,8 @@ export class NativeNavigation {
   ): Promise<{ commands: unknown[]; extras: NavigationExtras } | null> | null {
     if (!this.outlets.presents) return null;
     const path = this.pathFor(commands, extras);
-    if (!this.outlets.inTabBehind(path)) return null;
+    // A tab in front of a bar a screen covers is behind that screen just the same.
+    if (!this.outlets.inTabBehind(path) && !this.outlets.coveredTabAt(path)) return null;
     const query = typeof commands === 'string' ? this.queryOf(commands, extras) : {};
     return presentedCommands(this.router, path).then(
       (presented) =>
