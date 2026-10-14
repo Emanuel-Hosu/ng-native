@@ -68,6 +68,39 @@ title and an image and a badge string, with no way to put a view in their place.
 `<native-tab>` takes no content while `<native-header-item>` does, and why customization beyond the
 basics lives in the `standardAppearance`/`scrollEdgeAppearance` inputs rather than in markup.
 
+## A search tab
+
+iOS 26 sets a tab bar's search tab apart: a circular button at the trailing end of the bar, which
+grows into the search field when tapped. `role="search"` makes a tab that tab, a `UISearchTab`:
+
+```html
+<native-tabs-outlet>
+  <native-tab path="library" title="Library" sfSymbol="books.vertical.fill" />
+  <native-tab
+    path="search"
+    systemItem="search"
+    role="search"
+    [automaticallyActivatesSearch]="true"
+  />
+</native-tabs-outlet>
+```
+
+`automaticallyActivatesSearch` focuses the search field as the tab is selected, and needs a
+[`<native-search-bar>`](/packages/router/header#search) in the header of the stack inside the tab.
+Not on the tab's first visit, though: the outlet builds a tab's screen when the router activates
+it, after native has selected the tab, so that first time the field is shown but not focused.
+Every later visit focuses it.
+
+Both need iOS 26.1 and react-native-screens 4.29 or later, beyond the 4.26 Expo SDK 57 installs;
+older ones ignore them, and Android has no such tab. Native reads the role once, as the tab is
+created, so bind a value that does not change, and a bar has one search tab at most.
+
+Which build the app is decides whether the role is needed at all. Linked against the iOS 26 SDK,
+as Expo Go and an app built with Xcode 26 are, UIKit keeps its older behavior and a plain
+`systemItem="search"` already draws the detached button, on iOS 26 and on iOS 27. Built with the
+iOS 27 SDK, only a `UISearchTab` is detached, and on iOS 27 only while
+`automaticallyActivatesSearch` is on.
+
 ## Defaults for every tab bar
 
 `withTabDefaults` is `withHeaderDefaults` for tab bars: the outlet's `tintColor`, `backgroundColor`
