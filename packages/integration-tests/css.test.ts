@@ -56,6 +56,30 @@ describe('CSS compilation', () => {
       /not a media feature/,
     );
   });
+
+  it('keeps the queries of a list that can match beside one that never does', () => {
+    // A comma is an or, so `print` adds nothing, and the rest is the query.
+    const sheet = compileCss('@media screen and (min-width: 500px), print { .a { color: red } }');
+    assert.deepEqual(sheet.rules[0].condition, { feature: 'width', op: 'gte', value: 500 });
+    assert.deepEqual(
+      compileCss('@media print, (min-width: 500px), speech { .a { color: red } }').rules[0]
+        .condition,
+      { feature: 'width', op: 'gte', value: 500 },
+    );
+  });
+
+  it('treats a qualified type that never matches as dead, as an unqualified one is', () => {
+    const only = compileCss('@media only print, (min-width: 500px) { .a { color: red } }');
+    assert.deepEqual(only.rules[0].condition, { feature: 'width', op: 'gte', value: 500 });
+    const typed = compileCss(
+      '@media only print and (min-width: 1px), (min-width: 500px) { .a { color: red } }',
+    );
+    assert.deepEqual(typed.rules[0].condition, { feature: 'width', op: 'gte', value: 500 });
+    assert.throws(
+      () => compileCss('@media only print { .a { color: red } }'),
+      /media type has no meaning/,
+    );
+  });
 });
 
 describe('CSS at runtime', () => {

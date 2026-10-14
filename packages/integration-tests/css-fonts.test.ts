@@ -123,7 +123,8 @@ describe('declaring a face', () => {
   it('tells such a file by its name where the face gives no format', () => {
     const face =
       "@font-face { font-family: Icons; src: url('./icons.woff2'), url('./icons.otf?v=2') }";
-    assert.equal(compileCss(face, 'test').fonts[0].source.asset, './icons.otf?v=2');
+    // Without its query, which names no file: the bundler resolves what it is given.
+    assert.equal(compileCss(face, 'test').fonts[0].source.asset, './icons.otf');
   });
 
   it('keeps the first file of a face that names none a device is known to load', () => {
@@ -131,6 +132,31 @@ describe('declaring a face', () => {
       "@font-face { font-family: Icons; src: url('./icons.woff2') format('woff2'), " +
       "url('./icons.woff') format('woff') }";
     assert.equal(compileCss(face, 'test').fonts[0].source.asset, './icons.woff2');
+  });
+
+  it('chooses among the files the bundle can hold, ahead of a remote one listed first', () => {
+    const face = (src: string) => `@font-face { font-family: A; src: ${src} }`;
+    assert.equal(
+      compileCss(face('url(https://x.com/a.ttf), url(./a.ttf)'), 'test').fonts[0].source.asset,
+      './a.ttf',
+    );
+    // The remote file is the format a device prefers, and is still not one it can have.
+    assert.equal(
+      compileCss(
+        face("url(https://x.com/a.ttf) format('truetype'), url(./a.woff2) format('woff2')"),
+        'test',
+      ).fonts[0].source.asset,
+      './a.woff2',
+    );
+    assert.equal(
+      compileCss(face('url(data:font/ttf;base64,AAAA), url(./a.ttf)'), 'test').fonts[0].source
+        .asset,
+      './a.ttf',
+    );
+    assert.throws(
+      () => compileCss(face('url(https://x.com/a.ttf), url(data:font/ttf;base64,AA)'), 'test'),
+      /naming a file in the app/,
+    );
   });
 
   it('refuses a face with no family or no source, which could only fail at runtime', () => {
