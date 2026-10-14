@@ -180,6 +180,16 @@ describe('deep links', () => {
     );
   });
 
+  it("leaves a /--/ in a query or a fragment to the app, and finds Expo Go's in the path", () => {
+    assert.equal(pathOf('https://example.com/search?q=/--/x'), '/search?q=/--/x');
+    assert.equal(pathOf('canary://notes?q=a/--/b'), '/notes?q=a/--/b');
+    assert.equal(pathOf('canary://notes#a/--/b'), '/notes#a/--/b');
+    assert.equal(pathOf('exp://127.0.0.1:8081?q=/--/x'), '/?q=/--/x');
+    assert.equal(pathOf('exp://127.0.0.1:8081/--/detail?q=/--/x'), '/detail?q=/--/x');
+    // Expo Go on iOS answers to schemes of its own beside exp://, and writes the same prefix.
+    assert.equal(pathOf('host.exp.exponent://192.168.1.4:8081/--/detail'), '/detail');
+  });
+
   it('does not deliver a launch at the root, which is where the app starts anyway', async () => {
     const platform = source('canary://');
     const links = build(DeepLinks, [{ provide: DeepLinks.SOURCE, useValue: platform.value }]);

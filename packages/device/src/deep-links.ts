@@ -64,13 +64,23 @@ function isLauncher(rest: string): boolean {
 /** Schemes that carry a host to skip before the path starts. */
 const HAS_HOST = new Set(['http', 'https', 'exp', 'exps']);
 
+/**
+ * The app's path after Expo Go's `/--/`, or null for a url with none in its path. In a query or a
+ * fragment, `/--/` is the app's own: a search for it is not a launch prefix.
+ */
+function expoGoPath(rest: string): string | null {
+  const end = rest.search(/[?#]/);
+  const marker = (end === -1 ? rest : rest.slice(0, end)).indexOf('/--/');
+  return marker === -1 ? null : rest.slice(marker + 3);
+}
+
 export function pathOf(url: string | null): string | null {
   if (!url) return null;
   const scheme = /^([a-z][a-z0-9+.-]*):\/\//i.exec(url);
   const rest = scheme ? url.slice(scheme[0].length) : url;
 
-  const expoGo = rest.indexOf('/--/');
-  if (expoGo !== -1) return rest.slice(expoGo + 3);
+  const expoGo = expoGoPath(rest);
+  if (expoGo !== null) return expoGo;
   if (isLauncher(rest)) return null;
 
   // A url with a host has one to skip. A custom scheme does not: `canary://settings` names a
