@@ -78,6 +78,18 @@ jobs:
       - name: Test the remaining projects that changed
         run: pnpm nx affected -t test --exclude=@ng-native/integration-tests,@ng-native/web --parallel=2
 
+      # The `node --test` hook on the oldest Node the packages support, which nothing else here
+      # runs. Node 22 cannot `require` an ES module that imports anything on the thread that runs
+      # `module.register`'s hooks, and the compiler does. `@ng-native/testing/register`, then the
+      # web suite for `@ng-native/testing/loader` registered with options. Under a minute.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.18'
+      - name: Test the node:test hook on Node 22.18
+        run: |
+          pnpm --filter @ng-native/testing exec node --import ./runner/register.mjs --test "src/**/*.node.test.ts"
+          pnpm --filter @ng-native/web test
+
   # Every suite, measured: most of CI's time, nearly all of it the native suite, so that suite is
   # split across four runners. `coverage` below merges what they measured and holds the floor.
   coverage-shard:
