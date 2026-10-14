@@ -4423,8 +4423,21 @@ export function boundDeclaration(
   };
 }
 
+/** A CSS number: `1.5`, `+1.5`, `.5`, `1e0`, `-2`. */
+const CSS_NUMBER = String.raw`[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?`;
+
 /** A length in `em` or a viewport unit, the whole value: `2em`, `-0.5em`, `50vw`. */
-const RELATIVE_LENGTH = /^\s*(-?\d*\.?\d+)(em|vw|vh|vmin|vmax)\s*$/i;
+const RELATIVE_LENGTH = new RegExp(String.raw`^\s*(${CSS_NUMBER})(em|vw|vh|vmin|vmax)\s*$`, 'i');
+
+/** A number with no unit, as a `line-height` is written: a multiple of the font size. */
+const UNITLESS = new RegExp(String.raw`^\s*(${CSS_NUMBER})\s*$`, 'i');
+
+/** A negative `line-height`, of a number or a length, which CSS has no value for. */
+const NEGATIVE = new RegExp(String.raw`^\s*-(?:\d|\.\d)`);
+
+/** Whether `text` is a `line-height` below zero, which a browser drops: `-1.5`, `-1em`, `-2px`. */
+export const isNegativeLineHeight = (prop: string, text: string): boolean =>
+  prop === 'lineHeight' && NEGATIVE.test(text);
 
 type RelativeUnit = NonNullable<DeferredDeclaration['compute']>['unit'];
 
@@ -4432,20 +4445,33 @@ type RelativeUnit = NonNullable<DeferredDeclaration['compute']>['unit'];
  * A bound declaration of a length in `em` or a viewport unit, `[style.width]="'2em'"`, as the
  * deferred declaration the compiler writes for the same value in a rule: measured where it is
  * used, against the font size in scope. A viewport unit is measured against the viewport, and
- * again when it changes. Null for any other value, and for a property that takes no length.
+ * again when it changes. A `line-height` with no unit is the number a rule hands down. Null for
+ * any other value, and for a property that takes no length.
  */
 export function boundRelativeLength(
   prop: string,
   text: string,
   on?: string,
 ): DeferredDeclaration | null {
-  const match = RELATIVE_LENGTH.exec(text);
   const kind = boundKind(prop);
-  if (!match || (kind !== 'length' && kind !== 'lineHeight')) return null;
+  if (kind !== 'length' && kind !== 'lineHeight') return null;
+  const relative = RELATIVE_LENGTH.exec(text);
+  if (relative) {
+    const unit = relative[2]!.toLowerCase() as RelativeUnit;
+    return {
+      props: [prop],
+      ...(on === undefined ? {} : { on }),
+      compute: { unit, factor: Number(relative[1]) },
+    };
+  }
+  // A line height with no unit is a number each text under it multiplies its own font size by,
+  // not the points it comes to here: the compiler writes the same for it in a rule.
+  const unitless = kind === 'lineHeight' ? UNITLESS.exec(text) : null;
+  if (!unitless) return null;
   return {
     props: [prop],
     ...(on === undefined ? {} : { on }),
-    compute: { unit: match[2]!.toLowerCase() as RelativeUnit, factor: Number(match[1]) },
+    compute: { unit: 'em', factor: Number(unitless[1]), multiple: true },
   };
 }
 

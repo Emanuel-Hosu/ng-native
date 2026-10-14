@@ -1,0 +1,346 @@
+/**
+ * CSS written in a `style` attribute or bound as text, where it means what a stylesheet means by
+ * it: a shorthand with a value for each side, and a `line-height` with no unit, which is a
+ * multiple of the font size. Native takes neither, and drops what it cannot read without a word.
+ */
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { describe, it, mock } from 'node:test';
+import type { Type } from '@angular/core';
+import { render, settle, type FakeFabricNode } from '@ng-native/testing';
+import { compileSource } from './compile.ts';
+
+const flatten = (nodes: readonly FakeFabricNode[]): FakeFabricNode[] =>
+  nodes.flatMap((node) => [node, ...flatten(node.children)]);
+
+async function build(name: string, source: string): Promise<Record<string, unknown>> {
+  const file = path.join(import.meta.dirname, `inline-style-css-${name}.fixture.ts`);
+  return compileSource(source, file, file.replace(/\.ts$/, '.generated.ts'));
+}
+
+/** The style props of the node with `id`, the given ones only. */
+function styleOf(fabric: { committed: readonly FakeFabricNode[] }, id: string, keys: string[]) {
+  const node = flatten(fabric.committed).find((one) => one.props['nativeID'] === id)!;
+  const style = (node.props['style'] ?? {}) as Record<string, unknown>;
+  return Object.fromEntries(keys.map((key) => [key, node.props[key] ?? style[key]]));
+}
+
+const SIDES = ['Top', 'Right', 'Bottom', 'Left'];
+const padding = ['padding', ...SIDES.map((side) => `padding${side}`)];
+
+describe('a shorthand with several values in a style', () => {
+  it('goes to each side from a style attribute', async () => {
+    const mod = await build(
+      'sides',
+      `
+import { Component } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-sides',
+  imports: [View],
+  template: '<view nativeID="box" style="padding: 4px 8px; margin: 1px 2px 3px 4px; gap: 5px 6px; inset: 0 7px 9px"></view>',
+})
+export class Sides {}
+`,
+    );
+    const { fabric } = await render(mod['Sides'] as Type<unknown>);
+    assert.deepEqual(styleOf(fabric, 'box', padding), {
+      padding: undefined,
+      paddingTop: 4,
+      paddingRight: 8,
+      paddingBottom: 4,
+      paddingLeft: 8,
+    });
+    assert.deepEqual(styleOf(fabric, 'box', ['margin', ...SIDES.map((side) => `margin${side}`)]), {
+      margin: undefined,
+      marginTop: 1,
+      marginRight: 2,
+      marginBottom: 3,
+      marginLeft: 4,
+    });
+    assert.deepEqual(styleOf(fabric, 'box', ['gap', 'rowGap', 'columnGap']), {
+      gap: undefined,
+      rowGap: 5,
+      columnGap: 6,
+    });
+    assert.deepEqual(styleOf(fabric, 'box', ['inset', 'top', 'right', 'bottom', 'left']), {
+      inset: undefined,
+      top: 0,
+      right: 7,
+      bottom: 9,
+      left: 7,
+    });
+  });
+
+  it('reads a declaration marked important as a bound one is read', async () => {
+    const mod = await build(
+      'important',
+      `
+import { Component } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-important',
+  imports: [View],
+  template: '<view nativeID="box" style="padding: 4px 8px !important; margin: 4px ! IMPORTANT; border-width: 2px !important"></view>',
+})
+export class Important {}
+`,
+    );
+    const { fabric } = await render(mod['Important'] as Type<unknown>);
+    assert.deepEqual(styleOf(fabric, 'box', padding), {
+      padding: undefined,
+      paddingTop: 4,
+      paddingRight: 8,
+      paddingBottom: 4,
+      paddingLeft: 8,
+    });
+    assert.deepEqual(styleOf(fabric, 'box', ['margin', 'borderWidth']), {
+      margin: 4,
+      borderWidth: 2,
+    });
+  });
+
+  it('splits on CSS whitespace outside parentheses', async () => {
+    const mod = await build(
+      'split',
+      `
+import { Component } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-split',
+  imports: [View],
+  template: \`
+    <view nativeID="calc" style="padding: 4px calc(2px + 2px)"></view>
+    <view nativeID="right" style="padding-right: calc(2px + 2px)"></view>
+    <view nativeID="tabbed" style="margin:\t1px\n2px"></view>
+    <view nativeID="nbsp" style="margin: 1px 2px"></view>
+  \`,
+})
+export class Split {}
+`,
+    );
+    const { fabric } = await render(mod['Split'] as Type<unknown>);
+    const right = styleOf(fabric, 'right', ['paddingRight'])['paddingRight'];
+    assert.deepEqual(styleOf(fabric, 'calc', padding), {
+      padding: undefined,
+      paddingTop: 4,
+      paddingRight: right,
+      paddingBottom: 4,
+      paddingLeft: right,
+    });
+    assert.deepEqual(styleOf(fabric, 'tabbed', ['marginTop', 'marginRight']), {
+      marginTop: 1,
+      marginRight: 2,
+    });
+    // A no-break space is no CSS whitespace: the value is one word, and not split.
+    assert.deepEqual(styleOf(fabric, 'nbsp', ['marginTop', 'marginRight']), {
+      marginTop: undefined,
+      marginRight: undefined,
+    });
+  });
+
+  it('drops one with too many values, with a warning, as a browser drops it', async () => {
+    const mod = await build(
+      'many',
+      `
+import { Component } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-many',
+  imports: [View],
+  template: \`
+    <view nativeID="sheet" class="p"></view>
+    <view nativeID="many" class="p" style="padding: 1px 2px 3px 4px 5px; gap: 1px 2px 3px"></view>
+  \`,
+  styles: '.p { padding: 3px; gap: 2px; }',
+})
+export class Many {}
+`,
+    );
+    const warnings: string[] = [];
+    mock.method(console, 'warn', (message: string) => warnings.push(message));
+    try {
+      const { fabric } = await render(mod['Many'] as Type<unknown>, { dev: true });
+      const keys = [...padding, 'gap', 'rowGap', 'columnGap'];
+      assert.deepEqual(styleOf(fabric, 'many', keys), styleOf(fabric, 'sheet', keys));
+      assert.equal(warnings.length, 2, warnings.join('\n'));
+      assert.match(warnings[0]!, /padding: 1px 2px 3px 4px 5px.*<view>.*dropped/);
+      assert.match(warnings[1]!, /gap: 1px 2px 3px.*<view>.*dropped/);
+    } finally {
+      mock.restoreAll();
+    }
+  });
+
+  it('follows a binding to one value, and to none', async () => {
+    const mod = await build(
+      'bound',
+      `
+import { Component, signal } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-bound',
+  imports: [View],
+  template: '<view nativeID="box" [style.padding]="pad()"></view>',
+})
+export class Bound { readonly pad = signal<string | undefined>('4px 8px'); }
+`,
+    );
+    const { fabric, instance } = await render(
+      mod['Bound'] as Type<{ pad: { set(value: string | undefined): void } }>,
+    );
+    assert.equal(styleOf(fabric, 'box', padding)['paddingRight'], 8);
+
+    instance.pad.set('2px');
+    await settle();
+    assert.deepEqual(styleOf(fabric, 'box', padding), {
+      padding: 2,
+      paddingTop: undefined,
+      paddingRight: undefined,
+      paddingBottom: undefined,
+      paddingLeft: undefined,
+    });
+
+    instance.pad.set('1px 3px');
+    await settle();
+    instance.pad.set(undefined);
+    await settle();
+    assert.deepEqual(
+      styleOf(fabric, 'box', padding),
+      Object.fromEntries(padding.map((key) => [key, undefined])),
+    );
+  });
+});
+
+describe('a side shorthand bound beside one of its sides', () => {
+  it('leaves the side alone once the shorthand is one value again', async () => {
+    const mod = await build(
+      'side',
+      `
+import { Component, signal } from '@angular/core';
+import { View } from '../components/src/view.ts';
+@Component({
+  selector: 'x-side',
+  imports: [View],
+  template: '<view nativeID="box" [style.padding]="pad()" [style.padding-top.px]="top()"></view>',
+})
+export class Side {
+  readonly pad = signal('4px 8px');
+  readonly top = signal<number | undefined>(undefined);
+}
+`,
+    );
+    const { fabric, instance } = await render(
+      mod['Side'] as Type<{
+        pad: { set(value: string): void };
+        top: { set(value: number): void };
+      }>,
+    );
+    instance.pad.set('2px');
+    await settle();
+    instance.top.set(5);
+    await settle();
+    instance.pad.set('3px');
+    await settle();
+    assert.deepEqual(styleOf(fabric, 'box', ['padding', 'paddingTop']), {
+      padding: 3,
+      paddingTop: 5,
+    });
+  });
+});
+
+describe('a line-height with no unit in a style', () => {
+  it('is a multiple of the font size, as in a stylesheet', async () => {
+    const mod = await build(
+      'line',
+      `
+import { Component } from '@angular/core';
+import { Text } from '../components/src/text.ts';
+@Component({
+  selector: 'x-line',
+  imports: [Text],
+  template: \`
+    <text nativeID="attribute" style="line-height: 1.5; font-size: 20px">a</text>
+    <text nativeID="bound" [style.line-height]="'1.5'" [style.font-size.px]="20">b</text>
+    <text nativeID="sheet" class="c">c</text>
+    <text nativeID="points" [style]="{ lineHeight: 24, fontSize: 20 }">d</text>
+  \`,
+  styles: '.c { line-height: 1.5; font-size: 20px; }',
+})
+export class Line {}
+`,
+    );
+    const { fabric } = await render(mod['Line'] as Type<unknown>);
+    const line = (id: string) => styleOf(fabric, id, ['lineHeight'])['lineHeight'];
+    assert.equal(line('sheet'), 30, 'control: the stylesheet');
+    assert.equal(line('attribute'), 30);
+    assert.equal(line('bound'), 30);
+    assert.equal(line('points'), 24, 'a number in a style object is points, as in React Native');
+  });
+
+  it('hands down the number, not the points, as a stylesheet does', async () => {
+    const mod = await build(
+      'inherit',
+      `
+import { Component } from '@angular/core';
+import { Text } from '../components/src/text.ts';
+@Component({
+  selector: 'x-inherit',
+  imports: [Text],
+  template: \`
+    <text class="c"><text nativeID="sheet" style="font-size: 40px">a</text></text>
+    <text style="line-height: 1.5; font-size: 20px"><text nativeID="attribute" style="font-size: 40px">b</text></text>
+    <text [style.line-height]="'1.5'" [style.font-size.px]="20"><text nativeID="bound" style="font-size: 40px">c</text></text>
+    <text [style.line-height]="1.5" [style.font-size.px]="20"><text nativeID="number" style="font-size: 40px">d</text></text>
+  \`,
+  styles: '.c { line-height: 1.5; font-size: 20px; }',
+})
+export class Inherit {}
+`,
+    );
+    const { fabric } = await render(mod['Inherit'] as Type<unknown>);
+    const line = (id: string) => styleOf(fabric, id, ['lineHeight'])['lineHeight'];
+    assert.equal(line('sheet'), 60, 'control: the stylesheet');
+    assert.equal(line('attribute'), 60);
+    assert.equal(line('bound'), 60);
+    assert.equal(line('number'), 60, 'a number bound to line-height is the CSS number');
+  });
+
+  it('reads the CSS number grammar, and refuses a negative one with a warning', async () => {
+    const mod = await build(
+      'grammar',
+      `
+import { Component } from '@angular/core';
+import { Text } from '../components/src/text.ts';
+@Component({
+  selector: 'x-grammar',
+  imports: [Text],
+  template: \`
+    <text nativeID="plus" style="line-height: +1.5; font-size: 20px">a</text>
+    <text nativeID="exponent" style="line-height: 1e0; font-size: 20px">b</text>
+    <text nativeID="sheet" class="c">c</text>
+    <text nativeID="negative" class="c" style="line-height: -1.5">d</text>
+    <text nativeID="negative-em" class="c" [style.line-height]="'-1em'">e</text>
+  \`,
+  styles: '.c { line-height: 2; font-size: 20px; }',
+})
+export class Grammar {}
+`,
+    );
+    const warnings: string[] = [];
+    mock.method(console, 'warn', (message: string) => warnings.push(message));
+    try {
+      const { fabric } = await render(mod['Grammar'] as Type<unknown>, { dev: true });
+      const line = (id: string) => styleOf(fabric, id, ['lineHeight'])['lineHeight'];
+      assert.equal(line('plus'), 30);
+      assert.equal(line('exponent'), 20);
+      assert.equal(line('sheet'), 40, 'control: the stylesheet');
+      assert.equal(line('negative'), 40, 'the declaration is dropped, and the rule stands');
+      assert.equal(line('negative-em'), 40);
+      assert.equal(warnings.length, 2, warnings.join('\n'));
+      assert.match(warnings[0]!, /line-height: -1\.5.*<text>.*dropped/);
+      assert.match(warnings[1]!, /line-height: -1em.*<text>.*dropped/);
+    } finally {
+      mock.restoreAll();
+    }
+  });
+});
