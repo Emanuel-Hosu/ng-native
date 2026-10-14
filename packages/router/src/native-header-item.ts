@@ -10,19 +10,22 @@
  * Native bar button items would look truer to the platform and bring menus and system symbols
  * with them, but they are data rather than views; they are a later opt-in.
  */
-import { Component, ElementRef, inject, input } from '@angular/core';
+import { Component, ElementRef, computed, inject, input } from '@angular/core';
 import type { EngineNode } from '@ng-native/fabric';
 import { ownHost } from './own-host.ts';
 import { optionalBoolean } from './transforms.ts';
 
-/** The bar slots. `title` and `center` are the same place. */
+/**
+ * The bar slots. `title` and `center` are the same place: iOS draws both as the title view, and
+ * `title` is committed as `center`, the only spelling Android's header knows.
+ */
 export type HeaderItemType = 'back' | 'left' | 'center' | 'title' | 'right' | 'searchBar';
 
 @Component({
   selector: 'native-header-item',
   template: '<ng-content />',
   host: {
-    '[type]': 'type()',
+    '[type]': 'slot()',
     '[hidesSharedBackground]': 'hidesSharedBackground()',
   },
 })
@@ -33,6 +36,16 @@ export class NativeHeaderItem {
 
   /** Which slot to sit in. Native defaults to `left`. */
   readonly type = input<HeaderItemType>();
+
+  /**
+   * What reaches native. react-native-screens' spec lists `title`, and iOS takes it, but Android's
+   * `ScreenStackHeaderSubviewManager` throws `Unknown type title` while mounting the item, which
+   * takes the screen down with it: a page that worked on iOS crashed on Android as it opened.
+   */
+  protected readonly slot = computed(() => {
+    const type = this.type();
+    return type === 'title' ? 'center' : type;
+  });
   /** Opt out of the bar's shared background behind this item. */
   readonly hidesSharedBackground = input(undefined, { transform: optionalBoolean });
 }
