@@ -161,4 +161,7 @@ export function registerScreenComponents(): void {
   // through its superviews. Written ahead of a page's scroll view it would be the screen's first
   // subview, where UIKit looks for the scroll view a large title collapses against.
   registerHoist('native-toolbar', 'screen');
+  // The header config takes header items and nothing else, so one written inside a component of
+  // the header commits as the config's child, not inside the component's view.
+  registerHoist('native-header-item', 'native-header', { only: true });
 }
