@@ -1357,6 +1357,81 @@ function wrappedLinesStretch(props: Record<string, unknown>): void {
 }
 
 /**
+ * A flex item that stretches across its line, with its size across the line `auto`, as CSS has
+ * it: as wide as a column, or as tall as a row, where Yoga takes the ratio over the stretch. In a
+ * column, a height given leaves the ratio nothing to work out. In a row, the line is as tall as
+ * the ratio makes the item from its width, at least, which is then the item's least height.
+ *
+ * ponytail: a width in points that does not grow, in a row, with any least or most height in
+ * points. One that grows, or is a share, keeps the ratio, as Yoga has it. A plain view only: an image keeps its picture's proportions.
+ */
+function stretchedOverRatio(node: EngineNode, props: Record<string, unknown>): void {
+  if (!isSet(props['aspectRatio']) || props['position'] === 'absolute') return;
+  if (viewNameOf(node) !== DEFAULT_VIEW) return;
+  const parent = layoutParent(node);
+  if (!parent) return;
+  const container = containerOf(parent);
+  // Remembered on the container, so the item is merged again when its direction changes.
+  parent.fitContainer = container;
+  const [direction, align] = container.split(' ');
+  if (align !== 'stretch' || !stretchesAcross(props, direction === 'row')) return;
+  if (direction === 'row') ratioAsLeast(props);
+  else if (isSet(props['height']) && props['height'] !== 'auto') delete props['aspectRatio'];
+}
+
+/** Whether an item stretches across its line: its own size and margins across it are `auto`. */
+function stretchesAcross(props: Record<string, unknown>, row: boolean): boolean {
+  if (!STRETCHES.has(props['alignSelf'] as string)) return false;
+  const size = row ? 'height' : 'width';
+  if (isSet(props[size]) && props[size] !== 'auto') return false;
+  const sides = row
+    ? MARGINS_ACROSS_ROW
+    : props['direction'] === 'rtl'
+      ? MARGINS_ACROSS_COLUMN_RTL
+      : MARGINS_ACROSS_COLUMN;
+  return sides.every((keys) => keys.map((key) => props[key]).find(isSet) !== 'auto');
+}
+
+/** The margins across a line, a side each, as Yoga reads them: the first set wins. */
+const MARGINS_ACROSS_ROW = [
+  ['marginTop', 'marginVertical', 'margin'],
+  ['marginBottom', 'marginVertical', 'margin'],
+];
+const MARGINS_ACROSS_COLUMN = [
+  ['marginStart', 'marginLeft', 'marginHorizontal', 'margin'],
+  ['marginEnd', 'marginRight', 'marginHorizontal', 'margin'],
+];
+/** Right to left, where the start is the right side. */
+const MARGINS_ACROSS_COLUMN_RTL = [
+  ['marginEnd', 'marginLeft', 'marginHorizontal', 'margin'],
+  ['marginStart', 'marginRight', 'marginHorizontal', 'margin'],
+];
+
+/** In a row, the height a ratio gives a width in points, as the item's least height. */
+function ratioAsLeast(props: Record<string, unknown>): void {
+  const [width, ratio] = [props['width'], props['aspectRatio']];
+  if (typeof width !== 'number' || typeof ratio !== 'number' || ratio <= 0) return;
+  const [least, most] = [props['minHeight'], props['maxHeight']];
+  const inPoints = (bound: unknown) => !isSet(bound) || typeof bound === 'number';
+  if (props['boxSizing'] === 'content-box' || !inPoints(least) || !inPoints(most)) return;
+  if (sizedAlong(props)) return;
+  props['minHeight'] = heldTo(width / ratio, least, most);
+  delete props['aspectRatio'];
+}
+
+/** Whether an item's width is not what it is along its line: it has a basis, or it grows. */
+function sizedAlong(props: Record<string, unknown>): boolean {
+  const basis = props['flexBasis'];
+  return (isSet(basis) && basis !== 'auto') || Number(props['flexGrow'] ?? props['flex'] ?? 0) > 0;
+}
+
+/** A height held to the least and most given, which CSS keeps: the least wins over the most. */
+function heldTo(height: number, least: unknown, most: unknown): number {
+  const under = typeof most === 'number' ? Math.min(height, most) : height;
+  return typeof least === 'number' ? Math.max(under, least) : under;
+}
+
+/**
  * Leave `aspect-ratio` out for a box with both a width and a height. CSS takes the ratio only
  * for a size that is `auto`; Yoga takes it over one of two that are given, the height in a
  * column and the width in a row.
@@ -4561,6 +4636,7 @@ export class Engine implements HostEngine {
     // After the basis, which is a size given where it is committed as one.
     ratioForAutoSize(merged);
     wrappedLinesStretch(merged);
+    stretchedOverRatio(node, merged);
     leastWins(merged, 'Height');
     leastWins(merged, 'Width');
     noOutline(merged);
