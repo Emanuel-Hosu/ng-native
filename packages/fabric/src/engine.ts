@@ -11,6 +11,7 @@
 import {
   boundDeclaration,
   boundRelativeLength,
+  CSS_SPACE,
   isNegativeLineHeight,
   faded,
   fills,
@@ -3496,7 +3497,8 @@ export class Engine implements HostEngine {
    * another order are a change too, to a selector that reads the class attribute, `[class^="a"]`.
    */
   setClasses(node: EngineNode, value: string): void {
-    const names = value.split(/\s+/).filter(Boolean);
+    // By HTML's spaces, which are CSS's: a vertical tab or a no-break space is part of a name.
+    const names = value.split(CSS_SPACE).filter(Boolean);
     const before = node.classes;
     node.classes = names.length ? new Set(names) : null;
     // Each class that came or went: one in both changes nothing.
