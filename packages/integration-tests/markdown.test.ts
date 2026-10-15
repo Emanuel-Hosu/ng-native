@@ -9,13 +9,23 @@ import { after, before, describe, it } from 'node:test';
 import type { Type } from '@angular/core';
 import { DeepLinks, type DeepLinkSource } from '@ng-native/device';
 import { cleanup, fireEvent, render, type FakeFabricNode } from '@ng-native/testing';
-import { lexer, type Token } from 'marked';
+import {
+  getDefaults,
+  Lexer,
+  lexer,
+  setOptions,
+  use,
+  type Token,
+  type TokenizerAndRendererExtension,
+} from 'marked';
+import { MarkdownStream } from '../components/src/markdown-stream.ts';
 import { compileFixture } from './compile.ts';
 
 interface Screen {
   source: { set(value: string | undefined): void };
   tokens: { set(value: readonly Token[] | undefined): void };
   classes: { set(value: Record<string, string>): void };
+  streaming: { set(value: boolean): void };
   presses: { href: string; title: string | null }[];
   prevent: boolean;
 }
@@ -358,6 +368,342 @@ describe('inputs', () => {
     screen.classes.set({ h1: 'custom' });
     await app.detectChanges();
     assert.equal(blocks()[0]!.props['fontSize'], null, 'md-h1 no longer applies');
+  });
+});
+
+describe('a block that did not change', () => {
+  it('keeps its native view when a block is added before it', async () => {
+    const { blocks, app, screen } = await show('First\n\nSecond');
+    const [first, second] = blocks();
+    screen.source.set('# Added\n\nFirst\n\nSecond');
+    await app.detectChanges();
+    assert.deepEqual(
+      blocks().map((node) => textOf(node)),
+      ['Added', 'First', 'Second'],
+    );
+    assert.equal(blocks()[1]!.reactTag, first!.reactTag, 'First is the same view, moved');
+    assert.equal(blocks()[2]!.reactTag, second!.reactTag, 'Second is the same view, moved');
+  });
+});
+
+describe('streaming', () => {
+  /** A document on screen with streaming set, fed its chunks one at a time. */
+  async function stream(...chunks: string[]) {
+    const shown = await show('');
+    shown.screen.streaming.set(true);
+    let source = '';
+    for (const chunk of chunks) {
+      source += chunk;
+      shown.screen.source.set(source);
+      await shown.app.detectChanges();
+    }
+    const feed = async (chunk: string) => {
+      source += chunk;
+      shown.screen.source.set(source);
+      await shown.app.detectChanges();
+    };
+    return { ...shown, feed };
+  }
+  const texts = (nodes: FakeFabricNode[]) => nodes.map((node) => textOf(node));
+  const json = (tokens: readonly Token[]) => JSON.parse(JSON.stringify(tokens)) as unknown;
+  const blocksOf = (tokens: readonly Token[]) => tokens.filter((one) => one.type !== 'space');
+
+  it('holds back an unclosed code span until it closes', async () => {
+    const { blocks, feed } = await stream('Run ', '`cx5');
+    assert.deepEqual(texts(blocks()), ['Run']);
+    await feed('81` now');
+    const paragraph = blocks()[0]!;
+    assert.equal(textOf(paragraph), 'Run cx581 now');
+    assert.equal(paragraph.children[1]!.props['fontFamily'], 'Menlo');
+  });
+
+  it('holds back unclosed emphasis, and draws the text before it again once it closes', async () => {
+    const { blocks, feed } = await stream('Done.\n\nThis is **very imp');
+    assert.deepEqual(texts(blocks()), ['Done.', 'This is']);
+    await feed('ortant** to');
+    const paragraph = blocks()[1]!;
+    assert.equal(textOf(paragraph), 'This is very important to');
+    assert.equal(paragraph.children[1]!.props['fontWeight'], '700');
+    await feed(' _kn');
+    assert.equal(textOf(blocks()[1]!), 'This is very important to');
+    await feed('ow_');
+    assert.equal(blocks()[1]!.children.at(-1)!.props['fontStyle'], 'italic');
+  });
+
+  it('leaves a lone asterisk, an underscore inside a word and a list bullet alone', async () => {
+    const { blocks } = await stream('* one\n* 2 * 3 is snake_case');
+    assert.deepEqual(texts(blocks()), ['\u2022one\u20222 * 3 is snake_case']);
+  });
+
+  it('holds back a table row until its line ends', async () => {
+    const { blocks, feed } = await stream('| a | b |\n');
+    assert.equal(blocks().length, 0, 'a header row with no delimiter row yet');
+    await feed('|---|---|\n| 1 | 2');
+    const table = () => blocks()[0]!;
+    const isRow = (node: FakeFabricNode) => node.props['flexDirection'] === 'row';
+    const rows = () =>
+      flatten([table()]).filter((node) => isRow(node) && !flatten(node.children).some(isRow));
+    assert.equal(rows().length, 1, 'the header row alone');
+    assert.equal(textOf(table()), 'ab');
+    await feed(' |\n');
+    assert.equal(rows().length, 2);
+    assert.equal(textOf(table()), 'ab12');
+  });
+
+  it('holds back a code fence until its opening line ends, then streams the code', async () => {
+    const { blocks, named, feed } = await stream('Code:\n\n', '\u0060\u0060\u0060t');
+    assert.deepEqual(texts(blocks()), ['Code:']);
+    await feed('s\nconst a = 1;\n\u0060\u0060');
+    assert.equal(named('ScrollView').length, 1);
+    assert.equal(textOf(named('ScrollView')[0]!), 'const a = 1;');
+    await feed('\u0060\n\nAfter');
+    assert.deepEqual(texts(blocks()), ['Code:', 'const a = 1;', 'After']);
+  });
+
+  it('redraws an earlier block a later chunk changes', async () => {
+    const { blocks, named, feed } = await stream('See [the docs][d].\n\nMore.\n\n');
+    assert.deepEqual(texts(blocks()), ['See [the docs][d].', 'More.']);
+    assert.equal(named('VirtualText').length, 0);
+    await feed('[d]: https://example.com\n');
+    assert.deepEqual(texts(blocks()), ['See the docs.', 'More.']);
+    assert.deepEqual(texts(named('VirtualText')), ['the docs'], 'drawn as a link');
+  });
+
+  it('turns the last paragraph into a heading when its underline arrives', async () => {
+    const { blocks, feed } = await stream('Intro\n\nTitle\n');
+    assert.equal(blocks()[1]!.props['accessibilityRole'], undefined);
+    await feed('===');
+    assert.deepEqual(texts(blocks()), ['Intro', 'Title']);
+    assert.equal(blocks()[1]!.props['accessibilityRole'], 'header');
+  });
+
+  it('keeps the native views of the blocks before a block that arrives', async () => {
+    const { blocks, feed } = await stream('First\n\nSecond');
+    const [first, second] = blocks();
+    await feed('\n\nThird');
+    assert.deepEqual(texts(blocks()), ['First', 'Second', 'Third']);
+    assert.equal(blocks()[0]!.reactTag, first!.reactTag, 'First is the same view');
+    assert.equal(blocks()[1]!.reactTag, second!.reactTag, 'Second is the same view');
+  });
+
+  it('draws a delimiter that cannot open emphasis, before punctuation inside a word', async () => {
+    const { blocks } = await stream('Use foo*.bar or foo_.bar now');
+    assert.deepEqual(texts(blocks()), ['Use foo*.bar or foo_.bar now']);
+  });
+
+  it('holds back a tilde before punctuation that starts a word, which can open', async () => {
+    const { blocks } = await stream('See ~/.config');
+    assert.deepEqual(texts(blocks()), ['See']);
+  });
+
+  it('draws a line after a header row that cannot be a delimiter row', async () => {
+    const { blocks, feed } = await stream('| a | b |\n|-');
+    assert.equal(blocks().length, 0, 'the start of a delimiter row');
+    await feed('x');
+    assert.equal(blocks().length, 1);
+    assert.match(textOf(blocks()[0]!), /\|-x$/);
+    const other = await stream('| a | b |\n|---|\n');
+    assert.equal(other.blocks().length, 1, 'a whole second line that did not make a table');
+  });
+
+  it('draws a fence line that cannot close the fence it is in', async () => {
+    const { named, feed } = await stream('\u0060\u0060\u0060\u0060\ncode\n~~~');
+    assert.equal(textOf(named('ScrollView')[0]!), 'code\n~~~', 'a tilde line in a backtick fence');
+    await feed('\n\u0060\u0060\u0060');
+    assert.equal(textOf(named('ScrollView')[0]!), 'code\n~~~', 'three backticks may yet be four');
+    await feed('\u0060\n\nAfter');
+    assert.equal(textOf(named('ScrollView')[0]!), 'code\n~~~');
+  });
+
+  it('draws a fence line too short to close the fence once a space follows it', async () => {
+    const { named } = await stream('\u0060\u0060\u0060\ncode\n\u0060\u0060 ');
+    assert.match(textOf(named('ScrollView')[0]!), /^code\n\u0060\u0060/);
+  });
+
+  it('converts only the last block again, however many blocks are kept before it', async () => {
+    const reads = new Map<string, number>();
+    const lex = Lexer.prototype.lex;
+    Lexer.prototype.lex = function (this: Lexer, source: string) {
+      const tokens = lex.call(this, source);
+      for (const token of tokens) {
+        if (token.type !== 'paragraph') continue;
+        const inline = token.tokens;
+        Object.defineProperty(token, 'tokens', {
+          get: () => {
+            reads.set(token.raw, (reads.get(token.raw) ?? 0) + 1);
+            return inline;
+          },
+        });
+      }
+      return tokens;
+    };
+    try {
+      const kept = Array.from({ length: 50 }, (_, i) => 'Kept ' + i + '\n\n').join('');
+      const { blocks, feed } = await stream(kept, 'Tail');
+      reads.clear();
+      await feed(' more');
+      assert.equal(blocks().length, 51);
+      assert.equal(textOf(blocks()[50]!), 'Tail more');
+      const settled = [...reads].filter(([raw]) => raw.startsWith('Kept'));
+      assert.deepEqual(settled, [], 'no kept paragraph is converted again');
+    } finally {
+      Lexer.prototype.lex = lex;
+    }
+  });
+
+  it('holds back a closing fence half written inside a quote', async () => {
+    const { named, feed } = await stream('> \u0060\u0060\u0060\n> code\n> \u0060\u0060');
+    assert.equal(textOf(named('ScrollView')[0]!), 'code');
+    await feed('\u0060\n\nAfter');
+    assert.equal(textOf(named('ScrollView')[0]!), 'code');
+  });
+
+  it('lexes only the last block again after a quote that defines a link reference', async () => {
+    const lexed: string[] = [];
+    const lex = Lexer.prototype.lex;
+    Lexer.prototype.lex = function (this: Lexer, source: string) {
+      lexed.push(source);
+      return lex.call(this, source);
+    };
+    try {
+      const { blocks, feed } = await stream('> [d]: https://example.com\n\nSee [d].\n\n', 'One');
+      lexed.length = 0;
+      await feed('\n\nTwo');
+      assert.deepEqual(texts(blocks()), ['', 'See d.', 'One', 'Two']);
+      assert.deepEqual(lexed, ['One\n\nTwo']);
+    } finally {
+      Lexer.prototype.lex = lex;
+    }
+  });
+
+  it('draws indented code that starts like a fence', async () => {
+    const { blocks, named } = await stream('Text\n\n    \u0060\u0060\u0060');
+    assert.equal(blocks().length, 2);
+    assert.equal(textOf(named('ScrollView')[0]!), '\u0060\u0060\u0060');
+  });
+
+  it('draws a finished paragraph when the one after it is held back whole', async () => {
+    const { blocks } = await stream('*one\n\n*two');
+    assert.deepEqual(texts(blocks()), ['*one']);
+    const quoted = await stream('> *one\n>\n> *two');
+    assert.deepEqual(texts(quoted.blocks()), ['*one'], 'in a quote');
+    const listed = await stream('- a\n\n  *one\n\n  *two');
+    assert.deepEqual(texts(listed.blocks()), ['\u2022a*one'], 'in a list item');
+  });
+
+  it('holds back an unfinished link or image until it closes', async () => {
+    const { blocks, named, feed } = await stream('See [the **docs**](http');
+    assert.deepEqual(texts(blocks()), ['See']);
+    await feed('s://example.com)');
+    assert.deepEqual(texts(blocks()), ['See the docs']);
+    assert.deepEqual(texts(named('VirtualText')).slice(0, 1), ['the docs'], 'drawn as a link');
+    await feed(' and ![a logo](https://exa');
+    assert.deepEqual(texts(blocks()), ['See the docs and']);
+    const brackets = await stream('Keep [this] note and [x');
+    assert.deepEqual(texts(brackets.blocks()), ['Keep [this] note and']);
+  });
+
+  it('holds back a header row with no leading pipe until its delimiter row ends', async () => {
+    const { blocks, feed } = await stream('a | b\n--- | -');
+    assert.equal(blocks().length, 0, 'a header row and the start of a delimiter row');
+    await feed('--\n1 | 2\n');
+    assert.equal(textOf(blocks()[0]!), 'ab12');
+  });
+
+  it('hides nothing but the end of the last block, streamed a character at a time', () => {
+    const documents = [
+      '*one\n\n*two\n\n**three**\n',
+      'See [the **docs**](https://example.com "Docs") and ![a logo](https://example.com/a.png).\n\n[x] note, `[y` and [z][d].\n\n[d]: https://example.com\n',
+      'a | b\n--- | ---\n1 | *2*\n\nAfter `code` and _em_.\n',
+      '| a | b |\n|:-|-:|\n| `1` | [2](https://example.com) |\n\nDone ~~gone~~.\n',
+      '# Title\n\n- *one*\n- two `x`\n  - nested **b**\n\n> quote *em*\n> more\n\n1. a\n2. [b](c)\n',
+      'Text\n\n```ts\nconst a = `b`;\n```\n\n~~~\ncode\n~~~\n\nSetext\n---\n',
+      '*x\n*x y\n\nEnd *a *b _c [d] [e](f) `g *h* and **i\n\n> *q\n> *q _r\n',
+      'Intro\n- `cx` and *em*\n- [l](u)\n\nNext\n> - *a*\n',
+    ];
+    for (const document of documents) {
+      const markdown = new MarkdownStream();
+      for (let end = 1; end <= document.length; end++) {
+        const prefix = document.slice(0, end);
+        const whole = blocksOf(lexer(prefix)).map((one) => one.raw);
+        const before = whole.slice(0, -1);
+        // A character at a time, and the whole prefix in one chunk.
+        for (const lexed of [markdown.lex(prefix), new MarkdownStream().lex(prefix)]) {
+          const shown = blocksOf(lexed).map((one) => one.raw);
+          assert.deepEqual(shown.slice(0, before.length), before, JSON.stringify(prefix));
+          assert.ok(shown.length <= whole.length, JSON.stringify(prefix));
+          const last = shown[before.length];
+          if (last !== undefined) {
+            assert.ok(whole.at(-1)!.startsWith(last.trimEnd()), JSON.stringify(prefix));
+          }
+        }
+      }
+      assert.deepEqual(json(markdown.lex(document)), json(lexer(document)), document);
+    }
+  });
+
+  it('applies a marked extension while streaming, one registered after the stream began too', async () => {
+    const shout: TokenizerAndRendererExtension = {
+      name: 'shout',
+      level: 'inline',
+      start: (source) => source.indexOf('!!'),
+      tokenizer(source) {
+        const match = /^!!(\w+)!!/.exec(source);
+        return match ? { type: 'shout', raw: match[0], text: match[1]! } : undefined;
+      },
+    };
+    const markdown = new MarkdownStream();
+    markdown.lex('Say');
+    try {
+      use({ extensions: [shout] });
+      assert.deepEqual(
+        json(markdown.lex('Say !!hi!! now')),
+        json(lexer('Say !!hi!! now')),
+        'lexed as marked.lexer does',
+      );
+      assert.ok(JSON.stringify(markdown.lex('Say !!hi!! now')).includes('"type":"shout"'));
+    } finally {
+      setOptions(getDefaults());
+    }
+  });
+
+  it('lexes a paragraph a bounded number of times, however many delimiters never close', () => {
+    let lexes = 0;
+    const lex = Lexer.prototype.lex;
+    Lexer.prototype.lex = function (this: Lexer, source: string) {
+      lexes++;
+      return lex.call(this, source);
+    };
+    try {
+      const runs = Array.from({ length: 200 }, (_, i) => (i % 2 ? '*a' : '_a') + i).join(' ');
+      for (const source of ['Text ' + runs, '> Text ' + runs, '- Text ' + runs]) {
+        lexes = 0;
+        assert.deepEqual(blocksOf(new MarkdownStream().lex(source)).length, 1, source.slice(0, 9));
+        assert.ok(lexes <= 3, lexes + ' lexes for ' + JSON.stringify(source.slice(0, 9)));
+      }
+    } finally {
+      Lexer.prototype.lex = lex;
+    }
+  });
+
+  it('holds back from an opener in the first line of a paragraph whose later line repeats it', async () => {
+    const { blocks } = await stream('Intro\n\n*x\n*x');
+    assert.deepEqual(texts(blocks()), ['Intro']);
+  });
+
+  it('holds back the marker of a list item it holds back whole, which would join the paragraph before', async () => {
+    const { blocks } = await stream('Intro\n- \u0060cx');
+    assert.deepEqual(texts(blocks()), ['Intro']);
+    const quoted = await stream('Intro\n> - *a');
+    assert.deepEqual(texts(quoted.blocks()), ['Intro']);
+  });
+
+  it('draws everything held back once streaming ends', async () => {
+    const { blocks, app, screen } = await stream('Run `cx5');
+    assert.deepEqual(texts(blocks()), ['Run']);
+    screen.streaming.set(false);
+    await app.detectChanges();
+    assert.deepEqual(texts(blocks()), ['Run `cx5']);
   });
 });
 

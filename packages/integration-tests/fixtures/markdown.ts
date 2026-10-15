@@ -16,6 +16,7 @@ import type { MarkdownBlock } from '../../components/src/markdown-blocks.ts';
     <markdown
       [source]="source()"
       [tokens]="tokens()"
+      [streaming]="streaming()"
       [classes]="classes()"
       (linkPress)="pressed($event)"
     />
@@ -25,6 +26,7 @@ export class MarkdownScreen {
   readonly source = signal<string | undefined>(undefined);
   readonly tokens = signal<readonly Token[] | undefined>(undefined);
   readonly classes = signal<MarkdownClasses>({});
+  readonly streaming = signal(false);
   readonly presses: { href: string; title: string | null }[] = [];
   prevent = false;
 

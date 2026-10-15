@@ -9,20 +9,32 @@
  * import { Markdown } from '@ng-native/components/markdown';
  * ```
  */
-import { Component, Injector, computed, inject, input, linkedSignal, output } from '@angular/core';
+import {
+  Component,
+  Injector,
+  booleanAttribute,
+  computed,
+  inject,
+  input,
+  linkedSignal,
+  output,
+} from '@angular/core';
 import { DeepLinks } from '@ng-native/device';
 import { nativePlatform } from '@ng-native/fabric';
 import { lexer, type Token } from 'marked';
 import type { ImageLoadEvent } from './events.ts';
 import { Image } from './image.ts';
 import {
+  blockKey,
   markdownBlocks,
   opensOnPress,
+  shareBlocks,
   type MarkdownBlock,
   type MarkdownElement,
   type MarkdownInline,
 } from './markdown-blocks.ts';
 import { MarkdownColumns } from './markdown-columns.ts';
+import { MarkdownStream } from './markdown-stream.ts';
 import { ScrollView } from './scroll-view.ts';
 import { TemplateSlot } from './template-slot.ts';
 import { Text } from './text.ts';
@@ -82,6 +94,15 @@ function imageSources(blocks: readonly MarkdownBlock[], into = new Set<string>()
  * dark. `classes` replaces one by its element's name, so a global stylesheet or Tailwind styles it
  * instead: `{ h1: 'text-3xl font-bold' }`. Put the default back beside your own to keep both.
  *
+ * For a source that grows as it streams in, an answer arriving a few words at a time, set
+ * `streaming` until it is complete. The blocks before the last one are then kept as they are and
+ * only the last is lexed and converted again, unless a chunk defines or changes a link reference,
+ * which can change a block already kept, and the whole source is lexed again. Syntax still open at its end, a code span, an emphasis, a link,
+ * an image or a table row, is held back until it closes. Of a code fence only an unfinished
+ * opening line is held back, and its code then streams as it arrives. Clearing `streaming` draws
+ * the whole source as written, and `tokens` are always drawn as given. A block that did not
+ * change keeps its views, streaming or not.
+ *
  * A pressed link is `(linkPress)`. An absolute target is then opened with `DeepLinks.open` unless
  * a handler calls `preventDefault()`; a relative one is only reported, for the app to route.
  */
@@ -90,7 +111,7 @@ function imageSources(blocks: readonly MarkdownBlock[], into = new Set<string>()
   imports: [Image, MarkdownColumns, ScrollView, TemplateSlot, Text, View],
   template: `
     <ng-template #blockTemplate let-list>
-      @for (block of list; track $index) {
+      @for (block of list; track blockKey(block)) {
         @switch (block.kind) {
           @case ('heading') {
             <text [class]="classFor(block.element)" accessibilityRole="header"
@@ -223,14 +244,40 @@ export class Markdown {
   readonly source = input<string>();
   /** Tokens `marked.lexer` made already, drawn in place of `source`. */
   readonly tokens = input<readonly Token[]>();
+  /**
+   * Whether `source` is still arriving, a chunk at a time. While it is, only its last block is
+   * lexed again, unless a link reference changes, and syntax still open at its end is held back.
+   * See the class note.
+   */
+  readonly streaming = input(false, { transform: booleanAttribute });
   /** A class for an element, in place of its default. See the class note. */
   readonly classes = input<MarkdownClasses>({});
   /** A link was pressed. See the class note. */
   readonly linkPress = output<MarkdownLinkPress>();
 
-  protected readonly blocks = computed(() =>
-    markdownBlocks(this.tokens() ?? lexer(this.source() ?? '')),
-  );
+  private readonly stream = new MarkdownStream();
+  protected readonly blockKey = blockKey;
+
+  /**
+   * The blocks each token the stream kept was drawn as. A kept token is the same object from one
+   * chunk to the next, so its blocks are not converted or compared again; a source lexed whole
+   * makes new tokens, and so new blocks.
+   */
+  private readonly streamed = new WeakMap<Token, readonly MarkdownBlock[]>();
+
+  /** The document's blocks, with each one that did not change kept, so it is not drawn again. */
+  protected readonly blocks = linkedSignal({
+    source: () => {
+      const tokens = this.tokens();
+      if (tokens) return { tokens, streamed: false };
+      const streamed = this.streaming();
+      return { tokens: this.lex(this.source() ?? '', streamed), streamed };
+    },
+    computation: ({ tokens, streamed }, previous?: { value: readonly MarkdownBlock[] }) =>
+      streamed
+        ? this.streamedBlocks(tokens, previous?.value)
+        : shareBlocks(previous?.value, markdownBlocks(tokens)),
+  });
 
   private readonly classOf = computed(() => ({ ...DEFAULT_CLASSES, ...this.classes() }));
 
@@ -248,6 +295,36 @@ export class Markdown {
       return kept;
     },
   });
+
+  private lex(source: string, streaming: boolean): readonly Token[] {
+    return streaming ? this.stream.lex(source) : lexer(source);
+  }
+
+  /** `tokens`' blocks, converting and sharing only those of tokens the stream had not kept. */
+  private streamedBlocks(
+    tokens: readonly Token[],
+    previous: readonly MarkdownBlock[] | undefined,
+  ): readonly MarkdownBlock[] {
+    const kept: MarkdownBlock[] = [];
+    let at = 0;
+    for (; at < tokens.length; at++) {
+      const blocks = this.streamed.get(tokens[at]!);
+      if (!blocks) break;
+      kept.push(...blocks);
+    }
+    const rest = tokens.slice(at);
+    const converted = rest.map((token) => markdownBlocks([token]));
+    // The blocks drawn after the kept ones, when those are still the ones drawn first.
+    const drawn = !kept.length || previous?.[kept.length - 1] === kept.at(-1);
+    const was = drawn ? previous?.slice(kept.length) : undefined;
+    const shared = shareBlocks(was, converted.flat());
+    let from = 0;
+    rest.forEach((token, i) => {
+      const count = converted[i]!.length;
+      this.streamed.set(token, shared.slice(from, (from += count)));
+    });
+    return [...kept, ...shared];
+  }
 
   protected classFor(element: MarkdownElement): string {
     return this.classOf()[element];
