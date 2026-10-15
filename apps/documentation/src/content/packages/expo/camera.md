@@ -130,9 +130,12 @@ protected async toggle(): Promise<void> {
     return;
   }
   this.recording = true;
-  const video = await this.camera()?.record({ maxDuration: 60 }); // resolves when it stops
-  this.recording = false;
-  if (video) console.log(video.uri);
+  try {
+    const video = await this.camera()?.record({ maxDuration: 60 }); // resolves when it stops
+    if (video) console.log(video.uri);
+  } finally {
+    this.recording = false;
+  }
 }
 ```
 
