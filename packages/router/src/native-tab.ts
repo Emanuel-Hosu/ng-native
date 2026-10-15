@@ -41,6 +41,7 @@ import {
 import { nativePlatform, type EngineNode, HostEngine } from '@ng-native/fabric';
 import { NATIVE_TAB_DEFAULTS } from './native-bar-defaults.ts';
 import { ownHost } from './own-host.ts';
+import { optionalBoolean } from './transforms.ts';
 import { SVG_ICON_HOST, SVG_ICON_RENDERER } from './svg-icons.ts';
 
 /**
@@ -335,9 +336,10 @@ export class NativeTab implements OnInit {
   /**
    * iOS 26.1 and later, for a `role="search"` tab: selecting the tab focuses the search field of
    * the `<native-search-bar>` in the header of the stack inside it, which that stack has to have.
-   * On iOS 27 the tab is detached only while this is on.
+   * On iOS 27 the tab is detached only while this is on, and the tab's first visit does not focus
+   * the field. Expo Go's react-native-screens is older and ignores it.
    */
-  readonly automaticallyActivatesSearch = input<boolean>();
+  readonly automaticallyActivatesSearch = input(undefined, { transform: optionalBoolean });
 
   /** The badge on the item: a count, or a single character for a dot. */
   readonly badge = input<string>();
