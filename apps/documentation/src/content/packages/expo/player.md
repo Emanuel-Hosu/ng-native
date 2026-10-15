@@ -63,7 +63,8 @@ Each returns a `Player<T>`:
   each to be wrong. Call its methods directly.
 - **`id`** - the player's shared-object id, which is what `<expo-video [player]="player.id">`
   takes: `expo-video`'s own `VideoView` passes this id, not the player. Bound to the player
-  itself, the view has no player and draws nothing, while the video plays on unseen.
+  itself, the view has no player and draws nothing, while the video keeps playing with nothing on
+  screen.
 - **`state`** - a signal, updated from the player's own change events: `playing`, `status`
   (`'idle'`, `'loading'`, `'readyToPlay'`, `'error'`), `currentTime`, `duration`, `muted`,
   `volume`, and `ended` (set once playback runs to the end, cleared when it starts again). Video

@@ -181,7 +181,7 @@ export interface Player<T> {
    * What `<expo-video [player]>` takes: the player's shared-object id. The view's `player` prop is
    * a number on the native side, and `expo-video`'s own `VideoView` passes this id rather than the
    * player; given the player itself, the view has no player and draws nothing, while the video
-   * plays on unseen.
+   * keeps playing with nothing on screen.
    */
   readonly id: number | undefined;
   readonly state: Signal<PlayerState>;

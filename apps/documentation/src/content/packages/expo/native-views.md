@@ -82,6 +82,11 @@ have to look each one up:
 | `expo-live-photo`                      | `ExpoLivePhoto` (`LivePhotoView`)       | iOS only.                                                              |
 | `expo-maps-google` / `expo-maps-apple` | `ExpoGoogleMaps` / `ExpoAppleMaps`      | Two modules, one view each. Typed as one: [Maps](/packages/expo/maps). |
 
+On Android, `<expo-blur>` on its own draws its tint, not a blur. `expo-blur` blurs there only the
+content of a `BlurTargetView` it is given, through its `blurMethod` and `blurTargetId` props; see
+[`expo-blur`'s documentation](https://docs.expo.dev/versions/latest/sdk/blur-view/). This table
+registers the blur view only, not the target.
+
 Registering one you have not installed does not error at registration time; it produces an element
 that commits as nothing (`UnimplementedNativeView`), which is why elements are named one at a time
 rather than all at once - finding out at startup which modules are actually present is not
