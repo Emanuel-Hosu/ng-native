@@ -16,7 +16,7 @@ import { registerExpoViews } from '@ng-native/expo';
 import { AppInfo } from '@ng-native/expo/app-info';
 import { Biometrics, type NativeBiometrics } from '@ng-native/expo/biometrics';
 import { Browser, type NativeBrowser } from '@ng-native/expo/browser';
-import { Camera, type CameraPicture } from '@ng-native/expo/camera';
+import { Camera, type CameraPicture, type CameraRecording } from '@ng-native/expo/camera';
 import { ImagePicker, type NativeImagePicker } from '@ng-native/expo/image-picker';
 import { Location, type NativeLocation, type Position } from '@ng-native/expo/location';
 import type { PermissionResponse } from '@ng-native/expo';
@@ -418,6 +418,42 @@ describe('the camera view', () => {
     ]);
   });
 
+  it('records a video from the view on screen, resolving when it is stopped', async () => {
+    registerExpoViews('expo-camera');
+    const calls: { name: string; tag: unknown; options?: unknown }[] = [];
+    let stop: (() => void) | null = null;
+    const fabric = createFakeFabric();
+    const app = mount(1, Fixture, fabric, {
+      providers: [
+        {
+          provide: Camera.SOURCE,
+          useValue: {
+            record(this: { nativeTag: number }, options: unknown) {
+              calls.push({ name: 'record', tag: this.nativeTag, options });
+              return new Promise((resolve) => (stop = () => resolve({ uri: 'file:///clip.mov' })));
+            },
+            async stopRecording(this: { nativeTag: number }) {
+              calls.push({ name: 'stopRecording', tag: this.nativeTag });
+              stop?.();
+            },
+          },
+        },
+      ],
+    });
+    const camera = (app.componentRef.instance as { camera(): Camera }).camera();
+    const tag = fabric.committed[0]!.children[0]!.reactTag;
+
+    const recording = camera.record({ maxDuration: 60 });
+    await camera.stopRecording();
+    const video: CameraRecording | null = await recording;
+
+    assert.equal(video?.uri, 'file:///clip.mov');
+    assert.deepEqual(calls, [
+      { name: 'record', tag, options: { maxDuration: 60 } },
+      { name: 'stopRecording', tag },
+    ]);
+  });
+
   it('answers null without the module, rather than a picture it never took', async () => {
     registerExpoViews('expo-camera');
     const app = mount(1, Fixture, createFakeFabric(), {
@@ -425,5 +461,6 @@ describe('the camera view', () => {
     });
     const camera = (app.componentRef.instance as { camera(): Camera }).camera();
     assert.equal(await camera.takePicture(), null);
+    assert.equal(await camera.record(), null, 'nor a video it never recorded');
   });
 });

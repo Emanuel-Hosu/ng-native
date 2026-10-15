@@ -1,5 +1,5 @@
 /**
- * `Camera`: a picture taken from the `<expo-camera>` view on screen.
+ * `Camera`: a picture taken, or a video recorded, from the `<expo-camera>` view on screen.
  *
  * ```ts
  * registerExpoViews('expo-camera'); // once, at startup
@@ -14,11 +14,15 @@
  * }
  * ```
  *
+ * A video is `record()`, which resolves once it stops - `stopRecording()`, or a `maxDuration` or
+ * `maxFileSize` reached - on a view with `mode="video"`.
+ *
  * Importing it is all it takes: it applies to every `<expo-camera>` in the template. The view is
  * what takes the picture, so this is a directive on the view rather than a service.
  *
  * In React, `takePictureAsync` is a method on the component's ref. Underneath, it is one of the
- * functions Expo defines on the view (`AsyncFunction("takePicture")` in the module), which native
+ * functions Expo defines on the view (`AsyncFunction("takePicture")` in the module, and `record`
+ * and `stopRecording` beside it), which native
  * finds by reading `nativeTag` off whatever it is called on. So this calls the same function with
  * the tag the engine committed the view under, and no ref is needed.
  */
@@ -31,10 +35,21 @@ export type PictureOptions = Omit<
   'onPictureSaved' | 'pictureRef'
 >;
 export type CameraPicture = import('expo-camera').CameraCapturedPicture;
+/** `expo-camera`'s own, less `mirror`, which it has deprecated for the view's `mirror` prop. */
+export type RecordingOptions = Omit<import('expo-camera').CameraRecordingOptions, 'mirror'>;
+/** A recorded video: a file in the cache directory. */
+export interface CameraRecording {
+  readonly uri: string;
+}
 
 /** The functions `expo-camera` defines on its view, called with the view's tag as `this`. */
 export interface CameraViewFunctions {
   takePicture(this: { nativeTag: number }, options: PictureOptions): Promise<CameraPicture>;
+  record(
+    this: { nativeTag: number },
+    options: RecordingOptions,
+  ): Promise<CameraRecording | undefined>;
+  stopRecording(this: { nativeTag: number }): Promise<void> | void;
 }
 
 @Directive({ selector: 'expo-camera', exportAs: 'camera' })
@@ -72,5 +87,24 @@ export class Camera {
     const nativeTag = this.engine.tagOf(this.node);
     if (!this.functions || nativeTag === null) return null;
     return this.functions.takePicture.call({ nativeTag }, options);
+  }
+
+  /**
+   * Record a video, resolving once the recording stops: `stopRecording()`, a `maxDuration` (in
+   * seconds) or `maxFileSize` (in bytes) reached, or the preview stopping. The view needs
+   * `mode="video"`, and the microphone permission unless it has `mute`. Null without the module,
+   * or before the view has reached the screen.
+   */
+  async record(options: RecordingOptions = {}): Promise<CameraRecording | null> {
+    const nativeTag = this.engine.tagOf(this.node);
+    if (!this.functions || nativeTag === null) return null;
+    return (await this.functions.record.call({ nativeTag }, options)) ?? null;
+  }
+
+  /** Stop the recording in progress, if there is one: `record()` then resolves with the video. */
+  async stopRecording(): Promise<void> {
+    const nativeTag = this.engine.tagOf(this.node);
+    if (!this.functions || nativeTag === null) return;
+    await this.functions.stopRecording.call({ nativeTag });
   }
 }
