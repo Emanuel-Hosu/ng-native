@@ -1298,6 +1298,38 @@ function stillTouched(props: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
+ * How a paragraph is truncated, which native does by its props: one the engine made around a
+ * view's own words is truncated as the view says, as a browser truncates a block's own text.
+ */
+const TRUNCATION = ['numberOfLines', 'ellipsizeMode'] as const;
+
+/**
+ * The truncation each paragraph made around a view's words was merged with, as the view said it.
+ * Not what it was committed with, which has the paragraph's own defaults in it.
+ */
+const truncatedBy = new WeakMap<EngineNode, readonly unknown[]>();
+
+/** What a view says of how its own words are truncated. */
+const truncationOf = (parent: EngineNode): unknown[] =>
+  TRUNCATION.map((key) => ownLayout(parent, key) ?? null);
+
+/** Whether a paragraph made around a view's words is truncated other than the view now says. */
+function truncationMoved(box: EngineNode, parent: EngineNode): boolean {
+  const merged = truncatedBy.get(box);
+  if (!merged) return false;
+  return truncationOf(parent).some((said, at) => said !== merged[at]);
+}
+
+function truncatedAs(box: EngineNode, props: Record<string, unknown>): void {
+  if (!box.anonymous || !box.parent) return;
+  const said = truncationOf(box.parent);
+  truncatedBy.set(box, said);
+  TRUNCATION.forEach((key, at) => {
+    if (said[at] !== null) props[key] = said[at];
+  });
+}
+
+/**
  * Leave `aspect-ratio` out for a box with both a width and a height. CSS takes the ratio only
  * for a size that is `auto`; Yoga takes it over one of two that are given, the height in a
  * column and the width in a row.
@@ -4392,6 +4424,7 @@ export class Engine implements HostEngine {
     const resolved = props['pointerEvents'];
     writeOwnProps(node.props, props, node.attributeOnly);
     withTextContent(node, viewName, props);
+    truncatedAs(node, props);
     const cascaded = props['transform'];
     const inline = inlineOf(node);
     const style = boundTransform(node, Object.assign(props, inline), cascaded);
@@ -6126,6 +6159,8 @@ export class Engine implements HostEngine {
       text.box = box;
     }
     box.parent = parent;
+    // Merged before the view is, so the view's truncation is read here: see `truncatedAs`.
+    if (truncationMoved(box, parent)) box.propsDirty = true;
     // The text is not under the box in the tree, so a change to it never marked the box.
     if (!this.isClean(text)) {
       box.subtreeDirty = true;
