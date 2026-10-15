@@ -54,8 +54,9 @@ have the module installed so the native side registers the component; this only 
 JavaScript half.
 
 `options.viewName` names one of several views a module has (the _default_ view, the module's
-first, takes no name); `options.defaultProps` are props the module's React component would have
-applied before native saw them - `expo-image` resolving a `contentFit` string, for instance.
+first, takes no name), or `{ ios, android }` for a view named differently on each platform;
+`options.defaultProps` are props the module's React component would have applied before native
+saw them - `expo-image` resolving a `contentFit` string, for instance.
 
 **`registerExpoViews(...elements)`** registers several known views at once, by element name:
 
@@ -69,8 +70,8 @@ have to look each one up:
 | Element                                | Module view                             | Notes                                                                  |
 | -------------------------------------- | --------------------------------------- | ---------------------------------------------------------------------- |
 | `expo-image`                           | `ExpoImage`                             | Takes `source` as a list; a single `{ uri }` is wrapped by the caller. |
-| `expo-blur`                            | `ExpoBlurView`                          | A blur of what is _behind_ a view - the one thing CSS cannot express.  |
-| `expo-video`                           | `ExpoVideo` (`VideoView`)               | The player is a shared object the module hands out; this is its view.  |
+| `expo-blur`                            | `ExpoBlur` (`ExpoBlurView`)             | A blur of what is _behind_ a view - the one thing CSS cannot express.  |
+| `expo-video`                           | `ExpoVideo` (`VideoView`)               | `SurfaceVideoView` on Android. Bind `player` to the player's `id`.     |
 | `expo-camera`                          | `ExpoCamera`                            | The module's default view. See [Camera](/packages/expo/camera).        |
 | `apple-sign-in-button`                 | `ExpoAppleAuthentication`               | See [Sign in with Apple](/packages/expo/apple-sign-in). iOS only.      |
 | `expo-symbol`                          | `SymbolModule`                          | SF Symbols, iOS only.                                                  |

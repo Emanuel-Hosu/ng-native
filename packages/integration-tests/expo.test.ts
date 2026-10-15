@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, before, beforeEach, describe, it } from 'node:test';
 import { ErrorHandler, InjectionToken, type Type } from '@angular/core';
-import { Engine } from '@ng-native/fabric';
+import { Engine, registerPlatformComponents } from '@ng-native/fabric';
 import { mount } from '@ng-native/platform';
 import { compileFixture } from './compile.ts';
 import {
@@ -331,6 +331,40 @@ describe('the views worth knowing the names of', () => {
     const view = fabric.committed[0]!;
     assert.match(view.viewName, /ExpoBlurView/, 'committed as the module its name says');
     assert.equal(view.props['intensity'], 50, 'with the defaults the React component applies');
+  });
+
+  it("names expo-blur's view as expo-blur asks for it", () => {
+    // expo-blur's NativeBlurModule asks for requireNativeViewManager('ExpoBlur', 'ExpoBlurView').
+    // There is no module called ExpoBlurView: Android's registry lists ExpoBlur_ExpoBlurView only.
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, { processColor: (value) => value });
+    registerExpoViews('expo-blur');
+
+    engine.appendChild(engine.root, engine.createElement('expo-blur'));
+    engine.commit();
+
+    assert.equal(fabric.committed[0]!.viewName, 'ViewManagerAdapter_ExpoBlur_ExpoBlurView');
+  });
+
+  it("names expo-video's view for each platform, as expo-video does", () => {
+    // On Android the view is SurfaceVideoView: VideoView is iOS's name, and Android has no view
+    // manager by it ("Can't find ViewManager 'ViewManagerAdapter_ExpoVideo_VideoView'").
+    registerExpoViews('expo-video');
+    const committed = () => {
+      const fabric = createFakeFabric();
+      const engine = new Engine(fabric, 1, { processColor: (value) => value });
+      engine.appendChild(engine.root, engine.createElement('expo-video'));
+      engine.commit();
+      return fabric.committed[0]!.viewName;
+    };
+
+    assert.equal(committed(), 'ViewManagerAdapter_ExpoVideo_VideoView');
+    registerPlatformComponents('android');
+    try {
+      assert.equal(committed(), 'ViewManagerAdapter_ExpoVideo_SurfaceVideoView');
+    } finally {
+      registerPlatformComponents('ios');
+    }
   });
 
   it('names SF Symbols by the module expo-symbols registers', () => {

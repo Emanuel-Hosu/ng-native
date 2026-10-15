@@ -39,7 +39,7 @@ registerExpoViews('expo-video'); // once, before the app mounts
 @Component({
   selector: 'app-clip',
   template: `
-    <expo-video [player]="player.native" class="flex-1" />
+    <expo-video [player]="player.id" class="flex-1" />
     <text>{{ player.state().currentTime }} / {{ player.state().duration }}</text>
     <pressable (press)="player.native.play()"><text>Play</text></pressable>
   `,
@@ -60,8 +60,10 @@ Each returns a `Player<T>`:
 
 - **`native`** - the module's own player object, straight through: it already has `play()`,
   `pause()`, `seekBy()`, `replace()` and the rest, and wrapping them would be a second place for
-  each to be wrong. Pass it to `<expo-video [player]="player.native">`, or call its methods
-  directly for audio.
+  each to be wrong. Call its methods directly.
+- **`id`** - the player's shared-object id, which is what `<expo-video [player]="player.id">`
+  takes: `expo-video`'s own `VideoView` passes this id, not the player. Bound to the player
+  itself, the view has no player and draws nothing, while the video plays on unseen.
 - **`state`** - a signal, updated from the player's own change events: `playing`, `status`
   (`'idle'`, `'loading'`, `'readyToPlay'`, `'error'`), `currentTime`, `duration`, `muted`,
   `volume`, and `ended` (set once playback runs to the end, cleared when it starts again). Video
@@ -95,11 +97,14 @@ import { registerExpoViews } from '@ng-native/expo';
 registerExpoViews('expo-video');
 ```
 
-Then use it as a plain element, with `player` bound to `player.native`:
+Then use it as a plain element, with `player` bound to `player.id`:
 
 ```html
-<expo-video [player]="player.native" [nativeControls]="false" contentFit="cover" class="flex-1" />
+<expo-video [player]="player.id" [nativeControls]="false" contentFit="cover" class="flex-1" />
 ```
+
+The view is `VideoView` on iOS and `SurfaceVideoView` on Android, as `expo-video` names them;
+`registerExpoViews('expo-video')` registers each on its own platform.
 
 The props are `expo-video`'s own `VideoViewProps`, unwrapped: `player`, `nativeControls` (default
 `true`), `contentFit` (`'contain'`, `'cover'` or `'fill'`, default `'contain'`),
