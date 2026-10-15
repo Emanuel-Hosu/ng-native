@@ -285,6 +285,46 @@ describe('HTML elements in a template', () => {
       assert.equal(committed.children[0]!.props['alignItems'], 'center');
     });
 
+    it('stacks the text elements a flex column of them holds, as a browser does', () => {
+      // A field's label: a name over a hint, `<label class="flex flex-col">`.
+      const COLUMN =
+        '.c { display: flex; flex-direction: column } .r { display: flex; flex-direction: row }' +
+        ' .f { display: flex }';
+      const label = engine.createElement('label', compileCss(COLUMN, 'flex'));
+      engine.setClasses(label, 'c');
+      // Each written across lines, which Angular leaves a space either side of: each is a
+      // paragraph of its own, which starts and ends without it.
+      for (const words of [' Name ', ' As on your passport ']) {
+        const span = engine.createElement('span');
+        engine.appendChild(span, engine.createText(words));
+        engine.appendChild(label, span);
+        // The whitespace a template leaves between them is no run of its own, and nor is the
+        // anchor an @if leaves.
+        engine.appendChild(label, engine.createText(' '));
+        engine.appendChild(label, engine.createAnchor());
+      }
+      const committed = commit(label);
+      assert.deepEqual(shape(committed), {
+        View: [{ Paragraph: ['"Name"'] }, { Paragraph: ['"As on your passport"'] }],
+      });
+      const viewName = () => {
+        engine.commit();
+        return fabric.committed[0]!.viewName;
+      };
+      // A flex container is a column where it says nothing of its direction.
+      engine.setClasses(label, 'f');
+      assert.equal(viewName(), 'View');
+      // A row of them runs on as one paragraph, and so does a column with no flex.
+      engine.setClasses(label, 'r');
+      assert.equal(viewName(), 'Paragraph');
+      engine.setClasses(label, '');
+      assert.equal(viewName(), 'Paragraph');
+      // So does a column of a text element and words of its own.
+      engine.setClasses(label, 'c');
+      engine.appendChild(label, engine.createText('loose'));
+      assert.equal(viewName(), 'Paragraph');
+    });
+
     it('is one paragraph again once it stops centring, and a view once it centres again', () => {
       const outer = engine.createElement('span', compileCss(CENTRED, 'flex'));
       engine.setClasses(outer, 'c');
