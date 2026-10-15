@@ -96,7 +96,40 @@ function config() {
  * @returns {import('vite').Plugin[]}
  */
 export function ngNativeWeb(options = {}) {
-  return [config(), ...angular({ zoneless: true, emitClassMetadata: false, ...options })];
+  return [config(), ...angular({ zoneless: true, emitClassMetadata: false, ...options })].map(once);
+}
+
+/** Marks a plugin `ngNativeWeb()` made. See `once`. */
+const MADE = Symbol('ngNativeWeb');
+
+/**
+ * Has a plugin apply only where it is the first of its name that `ngNativeWeb()` made in the app's
+ * config. Storybook's recipe registers the preset twice, in the app's `vite.config.ts` and in
+ * `viteFinal`, and a second compiler compiles each component again, finding `input()` in a class
+ * the first one took the decorator off. By name rather than by call, so `ngNativeWebLink()` beside
+ * `ngNativeWeb()` still has the compiler, and once per resolution, so one result listed twice applies
+ * once too. A plugin's own `apply` still decides after this.
+ *
+ * @param {import('vite').Plugin} plugin
+ * @returns {import('vite').Plugin}
+ */
+function once(plugin) {
+  const own = plugin.apply;
+  /** The resolutions this plugin applied in: Vite hands each its own `env`. */
+  const applied = new WeakSet();
+  plugin[MADE] = true;
+  plugin.apply = (config, env) => {
+    const first = [config.plugins]
+      .flat(Infinity)
+      .find((other) => other?.[MADE] && other.name === plugin.name);
+    if (first && first !== plugin) return false;
+    // The same object listed again, as `[preset, preset]` lists it: Vite asks each occurrence.
+    if (applied.has(env)) return false;
+    applied.add(env);
+    if (typeof own === 'function') return own(config, env);
+    return own === undefined || own === env.command;
+  };
+  return plugin;
 }
 
 /** The plugins of `ngNativeWeb()` that `ngNativeWebLink()` keeps. */
