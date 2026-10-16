@@ -33,6 +33,7 @@ export {
 } from './css.ts';
 export { ELEMENT_STYLES, ELEMENT_STYLES_CSS } from './element-styles.ts';
 export { EngineIntersectionObserver, installDeferTriggers } from './defer-triggers.ts';
+export { installNodeGlobal } from './node-global.ts';
 export { faceName, registeredFaces } from './font-faces.ts';
 export { firstFamily } from './inline-token.ts';
 export {

@@ -11,6 +11,7 @@
  * `installDeferTriggers` runs once, from `mount()`, before anything renders.
  */
 import { isEngineNode, viewNameOf, type EngineNode, type WindowFrame } from './engine.ts';
+import { letEngineNodesPass, type Constructor } from './node-global.ts';
 
 /** The views a node scrolls inside of, and whose scrolling can bring it into view. */
 const SCROLLERS = new Set(['ScrollView', 'AndroidHorizontalScrollView']);
@@ -144,8 +145,6 @@ function visibleShare(target: EngineNode): number | null {
   return area > 0 ? (width * height) / area : 1;
 }
 
-type Constructor = abstract new (...args: never[]) => object;
-
 /** React Native's own `IntersectionObserver`, when its feature flag has installed one. */
 interface NativeObserver {
   observe(target: unknown): void;
@@ -173,14 +172,7 @@ export function installDeferTriggers(): void {
 
   const existing = scope['Element'] as Constructor | undefined;
   if (existing) {
-    // Its own check if it defines one, and the ordinary prototype walk if not.
-    const own = existing[Symbol.hasInstance];
-    Object.defineProperty(existing, Symbol.hasInstance, {
-      configurable: true,
-      value(this: Constructor, value: unknown): boolean {
-        return (this === existing && isEngineNode(value)) || own.call(this, value);
-      },
-    });
+    letEngineNodesPass(existing);
   } else {
     scope['Element'] = class Element {
       static [Symbol.hasInstance](value: unknown): boolean {

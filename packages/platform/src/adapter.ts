@@ -39,6 +39,7 @@ import {
   firstFamily,
   HostEngine,
   installDeferTriggers,
+  installNodeGlobal,
   markComponentHost,
   nativePlatform,
   onFontsRegistered,
@@ -969,6 +970,7 @@ export function mount(
     calmDevBanner();
   }
   installDeferTriggers();
+  installNodeGlobal();
   const { providers: extraProviders = [], inputs = {}, bindings, ...engineOptions } = options;
   // The factory needs the engine and the engine needs the factory's dirty hook, so the hook is
   // handed over once both exist rather than through the constructor.
