@@ -103,6 +103,28 @@ device and in a browser alike. iOS reports no `Enter` from a single-line field, 
 `$event.nativeEvent.selection`, a `{ start, end }` that changes as the caret moves or a range is
 selected.
 
+`(contentSizeChange)` fires for a multiline field only, as React Native's does, and carries
+`$event.nativeEvent.contentSize`, the `{ width, height }` of the text. Android reports it as the
+text changes. iOS reports it when the field itself changes size, as React
+Native's field does there: on the first layout, and as a field with no height of its own grows or
+shrinks with its text. A field held at a fixed height on iOS reports nothing while its text scrolls
+inside it, so a field that should grow with its text there leaves its height unset rather than
+setting it from this event.
+
+To follow the field's own height as it grows, leave the height unset, cap it with `max-height`, and
+read `(layout)`. It fires on both platforms whenever the field resizes, including when it reaches
+the cap. `(contentSizeChange)` is the size of the text, which leaves out the padding and goes on
+past the cap on Android.
+
+```html
+<text-input
+  multiline
+  style="max-height: 160px"
+  [(value)]="draft"
+  (layout)="fieldHeight.set($event.nativeEvent.layout.height)"
+/>
+```
+
 <!-- api: TextInput -->
 
 ## Line height
