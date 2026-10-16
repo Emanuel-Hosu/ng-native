@@ -499,6 +499,29 @@ describe('the SwiftUI and Compose views', () => {
     ]);
   });
 
+  it("asks Expo for the current platform's view of one named for each", () => {
+    const asked: [string, string | undefined][] = [];
+    const global = globalThis as { require?: (name: string) => unknown };
+    for (const OS of ['ios', 'android']) {
+      global.require = (name: string) => {
+        if (name === 'react-native') return { Platform: { OS } };
+        if (name !== 'expo') throw new Error(`no ${name}`);
+        return {
+          requireNativeView: (module: string, view?: string) => asked.push([module, view]),
+        };
+      };
+      try {
+        registerExpoViews('expo-video');
+      } finally {
+        delete global.require;
+      }
+    }
+    assert.deepEqual(asked, [
+      ['ExpoVideo', 'VideoView'],
+      ['ExpoVideo', 'SurfaceVideoView'],
+    ]);
+  });
+
   it('hosts the controls in the view each platform draws them in', () => {
     for (const platform of ['ios', 'android'] as const) {
       const fabric = createFakeFabric();

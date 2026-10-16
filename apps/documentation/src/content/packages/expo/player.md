@@ -110,10 +110,21 @@ The view is `VideoView` on iOS and `SurfaceVideoView` on Android, as `expo-video
 The props are `expo-video`'s own `VideoViewProps`, unwrapped: `player`, `nativeControls` (default
 `true`), `contentFit` (`'contain'`, `'cover'` or `'fill'`, default `'contain'`),
 `requiresLinearPlayback`, `fullscreenOptions`, and a few platform-specific ones (`showsTimecodes`
-on iOS, `surfaceType` and `buttonOptions` on Android). There is no Angular component wrapping
-these props one by one - an unknown prop on the element reaches native exactly as it would in
-`expo-video`'s own React component, and the module's own documentation is the reference for what
-each one does.
+on iOS, `buttonOptions` on Android). There is no Angular component wrapping these props one by
+one - an unknown prop on the element reaches native exactly as it would in `expo-video`'s own
+React component, and the module's own documentation is the reference for what each one does.
+
+`surfaceType` is the exception: `expo-video`'s React component reads it to choose between two
+Android views, and no native view reads it, so on the element it does nothing. For a
+`TextureView` on Android, register that view under an element of its own:
+
+```ts
+import { registerExpoView } from '@ng-native/expo';
+
+registerExpoView('expo-texture-video', 'ExpoVideo', {
+  viewName: { ios: 'VideoView', android: 'TextureVideoView' },
+});
+```
 
 Audio has no view: `expo-audio` plays through the device's audio session, not a view on screen.
 
