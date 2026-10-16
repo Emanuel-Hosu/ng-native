@@ -4760,7 +4760,6 @@ export class Engine implements HostEngine {
     const resolved = props['pointerEvents'];
     writeOwnProps(node.props, props, node.attributeOnly);
     withTextContent(node, viewName, props);
-    renameFonts(viewName, props, this.postScriptName);
     truncatedAs(node, props);
     const cascaded = props['transform'];
     const inline = inlineOf(node);
@@ -4776,6 +4775,8 @@ export class Engine implements HostEngine {
     flattenStyle(node.props[STYLE_OVERRIDE], style);
     this.fontFaces.apply(style);
     holdLoadingFamily(node, style);
+    // Once the face is matched: a family a view's own font names is the face its weight chose.
+    renameFonts(viewName, style, this.postScriptName);
     if (viewName === PARAGRAPH) {
       alignText(style, this.directionOf(node, style));
       this.wholeWords(node, style);
