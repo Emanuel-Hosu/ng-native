@@ -75,6 +75,10 @@ function withHandle(node: Omit<FakeFabricNode, 'instanceHandle'>, instanceHandle
   return node as FakeFabricNode;
 }
 
+/** The props JSI hands native: a key whose value is undefined is not there at all. */
+const defined = (props: object): Record<string, unknown> =>
+  Object.fromEntries(Object.entries(props).filter(([, value]) => value !== undefined));
+
 export function createFakeFabric(): FakeFabric {
   let handle = 0;
   let committed: FakeFabricNode[] = [];
@@ -169,13 +173,15 @@ export function createFakeFabric(): FakeFabric {
 
   const clone = (n: FabricNode, props?: object, keepChildren = false): FabricNode => {
     const source = n as unknown as FakeFabricNode;
-    noteModal(source, props as Record<string, unknown> | undefined);
+    const given = props ? defined(props) : undefined;
+    noteModal(source, given);
     return withHandle(
       {
         ...source,
         handle: ++handle,
-        // Fabric merges raw props onto the source props rather than replacing them.
-        props: props ? { ...source.props, ...props } : source.props,
+        // Fabric merges raw props onto the source props rather than replacing them, and JSI
+        // drops a key whose value is undefined on the way (JSIDynamic.cpp), so it changes nothing.
+        props: given ? { ...source.props, ...given } : source.props,
         children: keepChildren ? source.children : [],
       },
       source.instanceHandle,
@@ -189,7 +195,7 @@ export function createFakeFabric(): FakeFabric {
     instanceHandle: unknown,
   ): FakeFabricNode =>
     withHandle(
-      { handle: ++handle, reactTag, viewName, props: { ...props }, children: [] },
+      { handle: ++handle, reactTag, viewName, props: defined(props), children: [] },
       instanceHandle,
     );
 

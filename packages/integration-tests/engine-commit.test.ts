@@ -311,6 +311,82 @@ describe('what a commit sends', () => {
     ]);
   });
 
+  it('sends no brush for a fill or stroke that is no colour native reads', () => {
+    // react-native-svg stops the app on a solid brush with no colour in it, as processColor
+    // answers for a value it cannot read.
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, {
+      processColor: (value) => (value === 'red' ? 0xffff0000 : null),
+    });
+    for (const paint of ['red', 'not-a-colour']) {
+      const path = engine.createElement('path');
+      engine.setProp(path, 'style', { fill: paint, stroke: paint });
+      engine.appendChild(engine.root, path);
+    }
+    engine.commit();
+    assert.deepEqual(
+      fabric.committed.map((each) => [each.props['fill'], each.props['stroke']]),
+      [
+        [
+          { type: 0, payload: 0xffff0000 },
+          { type: 0, payload: 0xffff0000 },
+        ],
+        [undefined, undefined],
+      ],
+    );
+  });
+
+  it('takes the paint off a shape whose fill turns into a colour native cannot read', () => {
+    // Fabric keeps a prop a clone leaves out, and JSI leaves out one that is undefined: the old
+    // paint goes only when null is sent for it.
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, {
+      processColor: (value) => (value === 'red' ? 0xffff0000 : null),
+    });
+    const path = engine.createElement('path');
+    engine.setProp(path, 'style', { fill: 'red' });
+    engine.appendChild(engine.root, path);
+    engine.commit();
+    engine.setProp(path, 'style', { fill: 'not-a-colour' });
+    engine.commit();
+    assert.equal(fabric.committed[0]!.props['fill'] ?? null, null);
+  });
+
+  it('sends no paint for none, on a shape created with it and on one changed to it', () => {
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1, {
+      processColor: (value) => (value === 'red' ? 0xffff0000 : null),
+    });
+    const created = engine.createElement('path');
+    engine.setProp(created, 'style', { fill: 'none', stroke: 'none' });
+    engine.appendChild(engine.root, created);
+    const changed = engine.createElement('path');
+    engine.setProp(changed, 'style', { fill: 'red' });
+    engine.appendChild(engine.root, changed);
+    engine.commit();
+    engine.setProp(changed, 'style', { fill: 'none' });
+    engine.commit();
+    const [first, second] = fabric.committed;
+    assert.equal(first!.props['fill'], null);
+    assert.equal(first!.props['stroke'], null);
+    assert.equal(second!.props['fill'], null);
+  });
+
+  it('sends no brush an icon made of a colour native reads nothing in', () => {
+    // @ng-native/icons builds its solid brush before the engine sees it, with whatever
+    // processColor answered: null for a colour it cannot read.
+    const fabric = createFakeFabric();
+    const engine = new Engine(fabric, 1);
+    const path = engine.createElement('path');
+    engine.setProp(path, 'fill', { type: 0, payload: null });
+    engine.setProp(path, 'stroke', { type: 0, payload: 0xffff0000 });
+    engine.appendChild(engine.root, path);
+    engine.commit();
+    const [committed] = fabric.committed;
+    assert.equal(committed!.props['fill'], undefined);
+    assert.deepEqual(committed!.props['stroke'], { type: 0, payload: 0xffff0000 });
+  });
+
   it('keeps hyphenated attributes to the engine, since no native prop is spelt that way', () => {
     const props = committed({ 'data-row': '3', testID: 'row' });
     assert.equal(props['data-row'], undefined);

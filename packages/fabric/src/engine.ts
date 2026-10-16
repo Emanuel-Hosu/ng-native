@@ -3091,6 +3091,13 @@ export interface EngineStats {
 
 const FRAME_BUDGET_MS = 8;
 
+/** A solid brush with no colour in it, which stops react-native-svg. */
+const emptyBrush = (value: unknown): boolean =>
+  typeof value === 'object' &&
+  value !== null &&
+  (value as { type?: unknown }).type === 0 &&
+  (value as { payload?: unknown }).payload == null;
+
 export class Engine implements HostEngine {
   /** Scopes the CSS resolver's memo. Bumped once per commit. */
   private styleEpoch = 0;
@@ -6199,13 +6206,17 @@ export class Engine implements HostEngine {
     return this.animating;
   }
 
-  /** The host's conversions, applied to a copy. A removed prop travels as null and stays null. */
-  private processed(props: Record<string, unknown>): Record<string, unknown> {
+  /**
+   * The host's conversions, applied to a copy. A removed prop travels as null and stays null. On
+   * an update a colour dropped as unreadable is null too: JSI leaves out an undefined key, and
+   * Fabric keeps what a clone leaves out.
+   */
+  private processed(props: Record<string, unknown>, update: boolean): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(props)) {
       const value = props[key];
       if (value === null || value === undefined) out[key] = value;
-      else if (isColorProp(key)) out[key] = this.painted(key, value);
+      else if (isColorProp(key)) out[key] = this.colourProp(key, value, update);
       // A list of sources has already been resolved by whoever built it, as RN's resolver
       // also assumes: it passes any object through and only turns a number into one.
       else if (ASSET_PROPS.has(key) && !Array.isArray(value))
@@ -6368,7 +6379,7 @@ export class Engine implements HostEngine {
     if (childrenChanged || propsPayload) {
       handle = this.clone(
         previous.handle,
-        propsPayload && this.processed(propsPayload),
+        propsPayload && this.processed(propsPayload, true),
         childrenChanged ? childHandles : null,
       );
       // A clone is the same view, so it keeps the tag it was created with, not the newest tag
@@ -6705,7 +6716,11 @@ export class Engine implements HostEngine {
           ...STAND_INS[name],
         };
         const payload = diffProps(kept.committed.props, props);
-        const handle = this.clone(kept.committed.handle, payload && this.processed(payload), []);
+        const handle = this.clone(
+          kept.committed.handle,
+          payload && this.processed(payload, true),
+          [],
+        );
         kept.committed = { ...kept.committed, handle, props, childHandles: [] };
         kept.node = null;
       }
@@ -6811,7 +6826,13 @@ export class Engine implements HostEngine {
     const tag = nextTag();
     this.stats.createdNodes++;
     // instanceHandle is the retained node itself: it is what Fabric hands back on events.
-    const handle = this.fabric.createNode(tag, viewName, this.rootTag, this.processed(props), node);
+    const handle = this.fabric.createNode(
+      tag,
+      viewName,
+      this.rootTag,
+      this.processed(props, false),
+      node,
+    );
     for (const child of childHandles) this.fabric.appendChild(handle, child);
     node.committed = { handle, tag, props, childHandles, viewName };
     node.bornIn = this.stats.commits;
@@ -7121,15 +7142,27 @@ export class Engine implements HostEngine {
     return this.resolveAssetSource(value);
   }
 
+  /** A colour prop as `processed` sends it: one dropped as unreadable is null on an update. */
+  private colourProp(key: string, value: unknown, update: boolean): unknown {
+    const painted = this.painted(key, value);
+    return painted === undefined && update ? null : painted;
+  }
+
   /**
    * A colour prop as native takes it. A shape's `fill` or `stroke` the cascade settled from a
-   * token is the solid brush react-native-svg takes, and `none` no paint at all.
+   * token is the solid brush react-native-svg takes, `none` no paint at all, and one the host
+   * reads no colour in no paint of the shape's own.
    */
   private painted(key: string, value: unknown): unknown {
     if (!BRUSH_PROPS.has(key)) return this.color(value);
-    // Already a brush, as the icon wrote it: only one the cascade settled is still text.
-    if (typeof value !== 'string') return value;
-    return value === 'none' ? null : { type: 0, payload: this.color(value) };
+    // Already a brush, as the icon wrote it: only one the cascade settled is still text. An
+    // icon's solid brush holds whatever the host read, which is nothing for an unreadable colour.
+    if (typeof value !== 'string') return emptyBrush(value) ? undefined : value;
+    if (value === 'none') return null;
+    // A colour the host cannot read is dropped, as a browser drops it: a solid brush with no
+    // colour in it stops the app.
+    const payload = this.color(value);
+    return payload == null ? undefined : { type: 0, payload };
   }
 
   /**
