@@ -454,6 +454,36 @@ describe('the camera view', () => {
     ]);
   });
 
+  it('neither records nor stops before the view has reached the screen', async () => {
+    registerExpoViews('expo-camera');
+    const calls: string[] = [];
+    const mod = await compileFixture('fixtures/expo-camera.ts');
+    const app = mount(1, mod['ExpoCameraEarlyFixture'] as Type<unknown>, createFakeFabric(), {
+      providers: [
+        {
+          provide: Camera.SOURCE,
+          useValue: {
+            async record() {
+              calls.push('record');
+              return { uri: 'file:///clip.mov' };
+            },
+            async stopRecording() {
+              calls.push('stopRecording');
+            },
+          },
+        },
+      ],
+    });
+    const early = app.componentRef.instance as {
+      recorded: Promise<unknown>;
+      stopped: Promise<void>;
+    };
+
+    assert.equal(await early.recorded, null);
+    await early.stopped;
+    assert.deepEqual(calls, []);
+  });
+
   it('answers null without the module, rather than a picture it never took', async () => {
     registerExpoViews('expo-camera');
     const app = mount(1, Fixture, createFakeFabric(), {

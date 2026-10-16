@@ -45,10 +45,7 @@ export interface CameraRecording {
 /** The functions `expo-camera` defines on its view, called with the view's tag as `this`. */
 export interface CameraViewFunctions {
   takePicture(this: { nativeTag: number }, options: PictureOptions): Promise<CameraPicture>;
-  record(
-    this: { nativeTag: number },
-    options: RecordingOptions,
-  ): Promise<CameraRecording | undefined>;
+  record(this: { nativeTag: number }, options: RecordingOptions): Promise<CameraRecording>;
   stopRecording(this: { nativeTag: number }): Promise<void> | void;
 }
 
@@ -92,13 +89,14 @@ export class Camera {
   /**
    * Record a video, resolving once the recording stops: `stopRecording()`, a `maxDuration` (in
    * seconds) or `maxFileSize` (in bytes) reached, or the preview stopping. The view needs
-   * `mode="video"`, and the microphone permission unless it has `mute`. Null without the module,
-   * or before the view has reached the screen.
+   * `mode="video"`, and the microphone permission unless it has `mute`: without it, Android rejects
+   * and iOS records without sound. Null without the module, or before the view has reached the
+   * screen.
    */
   async record(options: RecordingOptions = {}): Promise<CameraRecording | null> {
     const nativeTag = this.engine.tagOf(this.node);
     if (!this.functions || nativeTag === null) return null;
-    return (await this.functions.record.call({ nativeTag }, options)) ?? null;
+    return this.functions.record.call({ nativeTag }, options);
   }
 
   /** Stop the recording in progress, if there is one: `record()` then resolves with the video. */

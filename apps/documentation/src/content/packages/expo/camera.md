@@ -124,24 +124,27 @@ module.
 ```
 
 ```ts
+protected readonly recording = signal(false);
+
 protected async toggle(): Promise<void> {
-  if (this.recording) {
+  if (this.recording()) {
     await this.camera()?.stopRecording();
     return;
   }
-  this.recording = true;
+  this.recording.set(true);
   try {
     const video = await this.camera()?.record({ maxDuration: 60 }); // resolves when it stops
     if (video) console.log(video.uri);
   } finally {
-    this.recording = false;
+    this.recording.set(false);
   }
 }
 ```
 
-The view records with `mode="video"`. Sound needs the microphone permission
-(`ExpoCamera.Camera.requestMicrophonePermissionsAsync`, through `Permission.of()` like the
-camera's); with `mute` on the view it records without it.
+The view records with `mode="video"`. Without `mute` on the view, `record()` needs the microphone
+permission (`ExpoCamera.Camera.requestMicrophonePermissionsAsync`, through `Permission.of()` like
+the camera's): without it, Android rejects and iOS records without sound. With `mute`, it records
+without sound and needs no microphone permission.
 
 ## Reference
 
