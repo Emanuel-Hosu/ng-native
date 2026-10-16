@@ -3570,7 +3570,7 @@ export class Engine implements HostEngine {
     const sheet = like ? like.sheet : this.ownSheets.get(node);
     if (sheet === undefined || node.sheet === sheet) return;
     node.sheet = sheet;
-    this.styles.noteSheet(sheet);
+    this.styles.noteSheet(sheet, true);
     this.watchStructure(sheet);
     this.watchHas(sheet);
     this.watchActive(sheet);
@@ -3613,7 +3613,7 @@ export class Engine implements HostEngine {
   createElement(name: string, sheet: StyleSheet | null = null): EngineNode {
     const node = new RetainedNode('element', name, this);
     node.sheet = sheet;
-    this.styles.noteSheet(sheet);
+    this.styles.noteSheet(sheet, true);
     const html = HTML_ELEMENTS.get(name);
     if (html !== undefined) {
       if (html.role) node.props['accessibilityRole'] = html.role;
@@ -3721,7 +3721,7 @@ export class Engine implements HostEngine {
   setHostSheet(node: EngineNode, sheet: StyleSheet | null): void {
     if (node.hostSheet === sheet) return;
     node.hostSheet = sheet;
-    this.styles.noteSheet(sheet);
+    this.styles.noteSheet(sheet, true);
     this.watchStructure(sheet);
     this.watchHas(sheet);
     this.watchActive(sheet);
@@ -4029,7 +4029,9 @@ export class Engine implements HostEngine {
     // And only a prop some selector names: `aria-valuenow` on every tick of a progress bar, a
     // field's text on every key, match nothing they did not.
     const read = key === 'style' ? this.inlineReachesStyle(node) : this.styles.reads(key);
-    this.markProps(node, read || heirs);
+    // And restyles the elements after it only where a rule asks the prop of an element before
+    // another, `[data-on] ~ .x`: a point of a chart set as a finger moves leaves those after it.
+    this.markProps(node, read || heirs, this.styles.readsBeside(key));
     if (SIZES_A_RUN.has(key)) this.markParagraph(node);
   }
 
@@ -4156,7 +4158,9 @@ export class Engine implements HostEngine {
     if (bound) byProp.set(prop, bound);
     else byProp.delete(prop);
     node.boundStyle = byProp.size ? [...byProp.values()] : null;
-    this.markProps(node);
+    // Settled by the cascade as the node is styled, and asked about by no selector: nothing after
+    // the node matches otherwise for it.
+    this.markProps(node, true, false);
     return bound !== null || refused;
   }
 
@@ -4227,7 +4231,7 @@ export class Engine implements HostEngine {
 
   // --- dirty marking ----------------------------------------------------
 
-  private markProps(node: EngineNode, affectsStyle = true): void {
+  private markProps(node: EngineNode, affectsStyle = true, beside = true): void {
     node.propsDirty = true;
     // Classes, `nativeID` and anything else a selector can read live in props, so any of them
     // changing can change what this node matches, and through it what its whole subtree does.
@@ -4237,7 +4241,8 @@ export class Engine implements HostEngine {
       node.styleDirty = true;
       // `.peer:focus ~ .label`: what a later sibling matches can hang on this node's classes and
       // state, though nothing about the sibling moved. Only sheets that ask about siblings pay.
-      if (this.structuralSheets) this.markLaterSiblings(node);
+      // Not for a change `beside` says no rule asks of an element before another.
+      if (this.structuralSheets && beside) this.markLaterSiblings(node);
       if (this.hasSheets) this.markBeneath(node.parent);
     }
     // The root has no parent to carry the mark, so it carries its own: `.dark` on the root alone
