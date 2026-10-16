@@ -136,12 +136,25 @@ export function opensOnPress(href: string): boolean {
   return scheme !== null && LINK_SCHEMES.has(scheme);
 }
 
-/** An image's address if it may be loaded: `http` or `https` only. */
+/**
+ * An image's address if it may be loaded: `http`, `https`, or a picture written into the document
+ * as a `data:` url of a raster type. A pasted screenshot arrives that way from a web editor, and
+ * a native image only decodes such a picture: nothing in it runs. Any other `data:` url, an SVG
+ * or HTML among them, is refused, as is every other scheme.
+ */
 export function imageSource(href: string): string | null {
   const source = href.trim();
   const scheme = schemeOf(source);
-  return scheme !== null && IMAGE_SCHEMES.has(scheme) ? source : null;
+  if (scheme === null) return null;
+  if (IMAGE_SCHEMES.has(scheme)) return source;
+  if (scheme !== 'data') return null;
+  // A native loader may not decode a url with whitespace in it, so a wrapped payload is joined.
+  const joined = source.replace(/\s+/g, '');
+  return DATA_IMAGE.test(joined) ? joined : null;
 }
+
+/** A base64 `data:` url of a raster picture: PNG, JPEG, GIF or WebP. */
+const DATA_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[a-z0-9+/=]+$/i;
 
 /** A link's or an image's target with its entities decoded, or null when it is not a string. */
 function hrefOf(token: Token): string | null {
