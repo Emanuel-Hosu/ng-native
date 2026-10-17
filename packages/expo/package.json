@@ -44,6 +44,7 @@
     "./image-editor": "./src/image-editor.ts",
     "./image-picker": "./src/image-picker.ts",
     "./keep-awake": "./src/keep-awake.ts",
+    "./keyboard": "./src/keyboard.ts",
     "./language-model": "./src/language-model.ts",
     "./live-activity": "./src/live-activity.ts",
     "./locale": "./src/locale.ts",
@@ -174,6 +175,10 @@
         "types": "./dist/keep-awake.d.ts",
         "default": "./dist/keep-awake.js"
       },
+      "./keyboard": {
+        "types": "./dist/keyboard.d.ts",
+        "default": "./dist/keyboard.js"
+      },
       "./language-model": {
         "types": "./dist/language-model.d.ts",
         "default": "./dist/language-model.js"
@@ -270,6 +275,7 @@
     }
   },
   "dependencies": {
+    "@ng-native/device": "workspace:*",
     "@ng-native/fabric": "workspace:*"
   },
   "nx": {
