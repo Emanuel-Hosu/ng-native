@@ -1,3 +1,45 @@
+## 0.16.0 (2026-10-17)
+
+### 🩹 Fixes
+
+- On Android, `ui-date-picker`'s `range` now limits the dates that can be picked, and its `accessibilityLabel` is what TalkBack reads, with `@expo/ui` 57.0.21 or later. ([#928](https://github.com/ng-native/ng-native/pull/928), [#924](https://github.com/ng-native/ng-native/issues/924))
+
+  Compose's date picker reads the range as `selectableDates`, in milliseconds, and the label as the `semantics` modifier's `contentDescription`, so a picker's committed `modifiers` on Android now include it. The typed components also stop sending Compose the SwiftUI props it never reads: an image's and a menu's props and added modifiers, a button's `label`, `systemImage` and `role` (the label is still drawn as text inside it), a toggle's `label`, a date picker's `title`, a host's `ignoreSafeArea` and a slot's `extraProps`.
+
+- `UiContextMenu` and `UiViewHost` are exported from the main `@ng-native/expo` entry, beside the other typed `@expo/ui` components. ([#919](https://github.com/ng-native/ng-native/pull/919), [#911](https://github.com/ng-native/ng-native/issues/911))
+
+  They were exported only from `@ng-native/expo/expo-ui-components`, so `import { UiContextMenu, UiViewHost } from '@ng-native/expo'` failed. That entry still exports them too.
+
+- `ui-view-host`'s `matchContents` sizes it to the element it holds again with `@expo/ui` 57.0.23 and later, on iOS and Android, which a `ui-context-menu` trigger and a `ui-bottom-sheet` with `fitToContents` rely on. ([#923](https://github.com/ng-native/ng-native/pull/923), [#910](https://github.com/ng-native/ng-native/issues/910))
+
+  From 57.0.23 the native view reads `matchContentsHorizontal` and `matchContentsVertical` in place of `matchContents`, so the host filled what SwiftUI or Compose offered it instead: a sheet with `fitToContents` opened taller than its content. `ui-view-host` now sends both forms, so it sizes to its element on either side of the change.
+
+- When a component's template does not compile, the error for its `templateUrl` or `styleUrl` file now names the component and says its template did not compile, instead of a Babel `Unexpected token` at the top of the stylesheet or template file. ([#918](https://github.com/ng-native/ng-native/pull/918), [#917](https://github.com/ng-native/ng-native/issues/917))
+
+  The Metro transformer retries a file whose Angular stage failed through Babel, so a TypeScript mistake is reported at its line and column. A stylesheet or a template file is not JavaScript, so Babel always failed on it, and its syntax error replaced the component's. Only a JavaScript or TypeScript file is retried now. A dev server may report the resource file's failure before the component's own, so this was the error a developer could see first.
+
+- A `<markdown>` image is drawn at its own size once it loads, as a browser draws it, and is narrowed to the document's width, keeping its shape, only when it is wider, instead of being scaled to the document's width. ([#922](https://github.com/ng-native/ng-native/pull/922), [#906](https://github.com/ng-native/ng-native/issues/906))
+
+  The size comes from the image's load event on iOS and Android, so a small picture such as an icon keeps its size. An image is still drawn at the document's width with a 200-point height until it loads. A class of the app's own given for `img` in `classes` sets the width instead. On the web host the load event carries no size, so an image there keeps the document's width.
+
+- A `ui-host` with `matchContents` in a `native-header-item` of type `title` or `center` now sizes to its content on iOS, instead of measuring 0 by 0 and hiding the header's title. ([#927](https://github.com/ng-native/ng-native/pull/927), [#909](https://github.com/ng-native/ng-native/issues/909))
+
+  react-native-screens makes a title item the bar's title view at its Yoga size, and UIKit lays out no title view of 0 by 0, while a host sized to its SwiftUI content has no size until it is laid out. On iOS a title item now has a least size of one point each way, under any size the app gives it, so its content is laid out and measured.
+
+- On iOS, a `<ui-picker>` with no `label` is drawn, where it drew nothing. ([#930](https://github.com/ng-native/ng-native/pull/930), [#908](https://github.com/ng-native/ng-native/issues/908))
+
+  SwiftUI's picker view in `@expo/ui` draws nothing without a label, so `UiPicker` now sends an empty one when `label` is not set. A segmented picker never shows its label anyway.
+
+- On iOS, `ui-image`'s `size` and `color`, `ui-gauge`'s `type` and its three labels, `ui-label`'s `color`, and the `accessibilityLabel` of `ui-date-picker` and `ui-menu` now take effect in the app, where SwiftUI ignored them before. ([#926](https://github.com/ng-native/ng-native/pull/926))
+
+  SwiftUI's views read none of these as props, so each is now sent as `@expo/ui`'s own components send it. A `ui-image`'s `size` is a `font` modifier of that size (a `font` modifier in `modifiers` wins over it) and its `color` a `foregroundStyle` modifier. A `ui-gauge`'s `type` is a `gaugeStyle` modifier, and each label is a `ui-text` in the slot SwiftUI reads it from. A `ui-label`'s `color` draws its symbol as the label's icon in that colour. An `accessibilityLabel` is the `accessibilityLabel` modifier. Each is added after the `modifiers` given, so a committed `modifiers` list now includes them.
+
+  `ui-button` no longer sends `target` to native, which no `@expo/ui` button reads: a widget or Live Activity layout still compiles it as before. `ui-view-host` sends `modifiers` on Android only, as SwiftUI's view host has none.
+
+### ❤️ Thank You
+
+- Ashley Hunter
+
 ## 0.15.0 (2026-10-16)
 
 ### 🩹 Fixes
