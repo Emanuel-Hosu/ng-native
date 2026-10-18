@@ -550,6 +550,89 @@ describe('what a child list changing has styled again', () => {
     }
   });
 
+  it('looks at each row before the end once a commit, as a list counted from the end grows', () => {
+    // A chart appends its thousands of points to a group one at a time: each would otherwise
+    // look again at every one before it, which were all marked already.
+    const s = list('.row:nth-last-child(odd) { border-top-width: 3px }', 0);
+    const rows = Array.from({ length: 60 }, s.row);
+    let marks = 0;
+    for (const row of rows) {
+      for (const flag of ['styleDirty', 'stateDirty'] as const) {
+        let value = row[flag];
+        Object.defineProperty(row, flag, {
+          configurable: true,
+          get: () => value,
+          set: (to: boolean) => {
+            if (to) marks++;
+            value = to;
+          },
+        });
+      }
+    }
+    for (const row of rows) s.engine.appendChild(s.parent, row);
+    assert.ok(marks < rows.length * 6, `${marks} marks for ${rows.length} rows`);
+    assert.deepEqual(
+      s.widths(),
+      rows.map((_, at) => (at % 2 ? 3 : 0)),
+    );
+    s.engine.removeChild(s.parent, s.parent.childList[10]!);
+    s.engine.appendChild(s.parent, s.row());
+    assert.equal(s.marked(), 'x'.repeat(60), 'a row leaving the middle, then one at the end');
+    assert.deepEqual(
+      s.widths(),
+      rows.map((_, at) => (at % 2 ? 3 : 0)),
+    );
+  });
+
+  it('looks at each row after a change once a commit, as rows leave and come at the start', () => {
+    // A chart taken down removes its thousands of points first to last: each would otherwise
+    // look again at every one after it, which were all marked already.
+    const s = list('.row ~ .row { border-top-width: 3px }', 60);
+    let marks = 0;
+    for (const row of s.rows) {
+      for (const flag of ['styleDirty', 'stateDirty'] as const) {
+        let value = row[flag];
+        Object.defineProperty(row, flag, {
+          configurable: true,
+          get: () => value,
+          set: (to: boolean) => {
+            if (to) marks++;
+            value = to;
+          },
+        });
+      }
+    }
+    for (const row of s.rows.slice(0, 30)) s.engine.removeChild(s.parent, row);
+    for (let i = 0; i < 30; i++) s.engine.insertBefore(s.parent, s.row(), s.parent.childList[0]!);
+    assert.ok(marks < s.rows.length * 6, `${marks} marks for ${s.rows.length} rows`);
+    assert.deepEqual(
+      s.widths(),
+      s.rows.map((_, at) => (at ? 3 : 0)),
+    );
+    s.engine.removeChild(s.parent, s.parent.childList[0]!);
+    s.engine.insertBefore(s.parent, s.row(), s.parent.childList[20]!);
+    s.engine.removeChild(s.parent, s.parent.childList[10]!);
+    assert.equal(s.marked(), 'x'.repeat(59), 'all after the first change');
+    assert.deepEqual(
+      s.widths(),
+      s.rows.slice(1).map((_, at) => (at ? 3 : 0)),
+    );
+  });
+
+  it('matches a row whose place changed alone, where the rules reading a place from under one are for another element', () => {
+    // `text:nth-child(odd) .label` reads the place of a text from what is under it: a view's
+    // place changing changes nothing under the view.
+    const s = list(
+      'text:nth-child(odd) .label { opacity: 0.5 } .row:last-child { border-top-width: 9px }',
+      4,
+    );
+    const old = s.parent.childList.at(-1)!;
+    s.engine.appendChild(s.parent, s.row());
+    assert.equal(s.marked(), 'xx.xx');
+    assert.deepEqual([old.styleDirty, old.stateDirty], [false, true]);
+    assert.deepEqual(s.widths(), [0, 0, 0, 0, 9]);
+  });
+
   it('is none of the rows after a prop changes that no rule asks of a row before another', () => {
     // A chart sets a prop on one of its thousands of points as a finger moves: what comes after
     // the point hangs on it only where a rule asks about it from before them.
@@ -646,6 +729,21 @@ describe('what a child list changing has styled again', () => {
     assert.equal(s.marked(), '.x....', 'and as it goes');
     assert.deepEqual(s.widths(), [0, 3, 3, 3, 3, 3]);
     assert.equal(s.fabric.committed[0]!.children[1]!.props['borderBottomWidth'] ?? null, null);
+  });
+
+  it('is none of the rows after a style bound to a token, and nothing for one bound again', () => {
+    // A chart writes `fill="var(--ink)"` on each of its points again as a finger moves: no rule
+    // asks about a bound style, and one written as it was changes nothing.
+    const s = list('.row ~ .row { border-top-width: 3px } .row { --ink: 4px }', 6);
+    const row = s.parent.childList[1]!;
+    s.engine.setBoundStyle(row, 'borderBottomWidth', 'var(--ink)');
+    assert.equal(s.marked(), '.x....', 'the row it is bound on');
+    s.engine.commit();
+    s.engine.setBoundStyle(row, 'borderBottomWidth', 'var(--ink)');
+    assert.equal(s.marked(), '......', 'bound as it was');
+    s.engine.setBoundStyle(row, 'borderBottomWidth', null);
+    assert.equal(s.marked(), '.x....', 'and as it goes');
+    assert.deepEqual(s.widths(), [0, 3, 3, 3, 3, 3]);
   });
 
   it('is the rows after the change where a sheet asks about any row before', () => {
@@ -971,6 +1069,28 @@ describe('what a row whose place changed keeps', () => {
     assert.equal(s.marks(), 'xxx......xx', 'the row that came, the one after it, and the ends');
     s.engine.commit();
     assert.deepEqual(s.labels(), [1, 0.5, 1, 1, 1, 0.5, 1, 1, 0.5, 1, 1]);
+  });
+
+  it('leaves what is under each row as it was where a sibling test nested in a rule is the row its own', () => {
+    // `.on ~ .row:is(.on ~ *)` asks what is before the row of the row alone: a box whose place
+    // changed changes nothing under it. A chart's group of thousands of points is such a box,
+    // moved as a label beside it comes and goes. (The `:is()` alone is compiled into the rule.)
+    const s = list('.on ~ .row:is(.on ~ *) { border-top-width: 3px }');
+    assert.deepEqual(s.widths(), [0, 3, 3, 3, 3, 3, 3, 3, 3, 3]);
+    s.engine.insertBefore(s.parent, s.row(), s.rows[0]!);
+    assert.equal(s.marks(), 'xmmmmmmmmmm', 'the row that came is styled, the rest matched');
+    // The row that came and its label: every other row matches as it did.
+    assert.equal(s.styled(), 2);
+    assert.deepEqual(s.widths(), [0, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3]);
+  });
+
+  it('styles a row again with all under it where a nested sibling test is of a box above', () => {
+    // `:is(.on ~ .row) .label`: whether a row has an `.on` before it is read by its label.
+    const s = list(':is(.on ~ .row) .label { opacity: 0.5 }');
+    assert.deepEqual(s.labels(), [1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
+    s.engine.removeChild(s.parent, s.rows[0]!);
+    s.engine.commit();
+    assert.deepEqual(s.labels(), [1, 1, 1, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]);
   });
 
   it('asks it only of the rows a rule could mean, by their classes', () => {
