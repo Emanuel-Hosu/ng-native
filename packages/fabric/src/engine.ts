@@ -3891,6 +3891,7 @@ export class Engine implements HostEngine {
     if (!target) return;
     const at = target.childList.indexOf(child);
     if (at < 0) return;
+    this.carryHoists(child);
     target.childList.splice(at, 1);
     child.parent = null;
     this.outSince.set(child, this.classesAbove);
@@ -3921,6 +3922,17 @@ export class Engine implements HostEngine {
     // ponytail: one restyled to another line height is not; mark its paragraph if seen cut.
     const words = root.oneWord !== undefined && unbroken(root) !== root.oneWord;
     if (run || words) this.markProps(root, false);
+  }
+
+  /**
+   * A node taken out of a subtree that left the tree can take hoisted nodes of the subtree's with
+   * it, as content projected inside an element of an `@if` moves into the element made again when
+   * the block opens. All of the subtree's are woken, and the commit, which the removal makes
+   * release, puts each back with the subtree it is in.
+   */
+  private carryHoists(child: EngineNode): void {
+    const top = this.topOf(child);
+    if (top.dormantHoists) this.wakeHoists(top);
   }
 
   /** A subtree that went out of the tree is back in: its hoisted nodes commit again. */
