@@ -1860,6 +1860,8 @@ const sameBase = (
 /** The props an animation can move without moving any box: what a frame of it only paints. */
 const PAINT_ONLY_KEYS = new Set([
   ...['transform', 'opacity', 'color', 'backgroundColor', 'tintColor', 'filter', 'boxShadow'],
+  // A rotate, a translate or a scale of its own, folded into the transform it paints.
+  ...['__translate', '__rotate', '__scale'],
   ...['borderColor', 'borderTopColor', 'borderRightColor', 'borderBottomColor', 'borderLeftColor'],
   ...['shadowColor', 'shadowOpacity', 'shadowRadius', 'shadowOffset', 'outlineColor'],
   ...['textDecorationColor', 'textShadowColor'],
@@ -2288,6 +2290,10 @@ function stickyLayout(node: EngineNode, props: Record<string, unknown>): void {
   if (!state?.shift || typeof inset !== 'number') return;
   moveBeforeOwn(props, { [state.axis === 'x' ? 'translateX' : 'translateY']: state.shift });
 }
+
+/** What a frame of an animation moved: its last gives back what it held, as a size may be. */
+const frameKeys = (values: Readonly<Record<string, unknown>>, finished: boolean): string[] =>
+  finished ? ['width'] : Object.keys(values);
 
 /** The moves the engine writes before a box's own transform: see `moveBeforeOwn`. */
 const ENGINE_MOVES = new WeakSet<object>();
@@ -5912,6 +5918,7 @@ export class Engine implements HostEngine {
     this.styles.setRootTokens({ ...this.styles.rootTokens, ...next });
     this.want(tokensAsk(next));
     this.root.subtreeDirty = true;
+    this.layoutStale = true;
     this.commit();
   }
 
@@ -6121,6 +6128,7 @@ export class Engine implements HostEngine {
     this.fontScale = next.fontScale;
     this.styles.setConditions(next);
     this.root.subtreeDirty = true;
+    this.layoutStale = true;
     // The window's size is the room everything is in: see `heldIn`.
     this.changesHeld = false;
     // Committed here rather than left to the next change-detection pass, because there may not
@@ -6944,6 +6952,7 @@ export class Engine implements HostEngine {
   /** The boxes from `from` up, to `upTo` and not it, to ask `:has()` again: see `markBeneath`. */
   private markAsked(from: EngineNode | null, upTo: EngineNode | null = null): void {
     forgetHasAnswers();
+    this.layoutStale = true;
     const wasClean = !this.root.structureDirty && !this.root.subtreeDirty;
     for (let node = from; node && node !== upTo; node = node.parent) {
       node.hasDirty = true;
@@ -6952,7 +6961,7 @@ export class Engine implements HostEngine {
       node.subtreeDirty = true;
       if (this.hasReaders.size) this.changedBeneath.add(node);
     }
-    if (wasClean && this.root.subtreeDirty) this.onDirty?.();
+    if (wasClean && this.root.subtreeDirty) this.dirtied();
   }
 
   /** `markBefore` for a change to `changed` in `parent`'s list, or one coming or going at `at`. */
@@ -7103,6 +7112,7 @@ export class Engine implements HostEngine {
   /** `node`'s child list changed: `moved` came into it at `at`, or went out of it from there. */
   private markStructure(node: EngineNode, moved: EngineNode, at: number): void {
     node.structureDirty = true;
+    this.layoutStale = true;
     // An item whose least width is measured holds something else now: see `settleMinimums`.
     if (this.minimums.size) {
       for (let up: EngineNode | null = node; up; up = up.parent) {
@@ -7227,7 +7237,41 @@ export class Engine implements HostEngine {
   }
 
   /** Walk up until we hit a node already known to have a dirty subtree. */
+  /**
+   * Whether anything has been marked since the last commit that could move layout: everything
+   * is, but a frame of an animation that only paints. A commit of such frames alone plans no
+   * layout and reads nothing back: a spinner turns on every frame for as long as its page is
+   * open, and the page's layout is the same on each of them.
+   */
+  private layoutStale = true;
+  /** Set while a frame of an animation marks a node whose animated props only paint. */
+  private paintTick = false;
+  /** Set for the length of a commit that nothing but such frames led to. */
+  private paintOnly = false;
+
+  /** Mark a node for a frame of its animation or transition, which moved these props. */
+  private tick(node: EngineNode, keys: readonly string[]): void {
+    this.paintTick = keys.every((key) => PAINT_ONLY_KEYS.has(key));
+    try {
+      this.markProps(node, false);
+    } finally {
+      this.paintTick = false;
+    }
+  }
+
+  /** Tell the host the tree is dirty: what its listener changes is no frame that only paints. */
+  private dirtied(): void {
+    const paintTick = this.paintTick;
+    this.paintTick = false;
+    try {
+      this.onDirty?.();
+    } finally {
+      this.paintTick = paintTick;
+    }
+  }
+
   private markPath(node: EngineNode | null): void {
+    if (!this.paintTick) this.layoutStale = true;
     const wasClean = !this.root.structureDirty && !this.root.subtreeDirty;
     for (let current = node; current && !current.subtreeDirty; current = current.parent) {
       current.subtreeDirty = true;
@@ -7235,7 +7279,7 @@ export class Engine implements HostEngine {
     // The tree has just gone from clean to dirty. Inside a change-detection pass that means
     // nothing, because the pass ends in a commit; outside one it means the change has no commit
     // coming, and the host has to arrange a frame.
-    if (wasClean && this.root.subtreeDirty) this.onDirty?.();
+    if (wasClean && this.root.subtreeDirty) this.dirtied();
   }
 
   private isClean(node: EngineNode): boolean {
@@ -7273,6 +7317,8 @@ export class Engine implements HostEngine {
     const started = now();
     // Faces registered before the walk, the global sheet's among them, reach every node in it.
     this.facesAdded = false;
+    this.paintOnly = !this.layoutStale;
+    this.layoutStale = false;
     this.movedBoxes.clear();
     this.grownBoxes.clear();
     this.changed.clear();
@@ -7281,7 +7327,8 @@ export class Engine implements HostEngine {
     this.holders = undefined;
     this.commitAsAsked();
     // Each a layout of the engine's, which an app of plain flex has asked for none of.
-    if (this.asked & LAYOUTS) this.settleLayout();
+    if (!this.paintOnly && this.asked & LAYOUTS) this.settleLayout();
+    this.paintOnly = false;
     this.changesHeld = true;
 
     this.countCommit(now() - started);
@@ -7904,7 +7951,8 @@ export class Engine implements HostEngine {
    * since this is asked of every node reconciled and most are none of these.
    */
   private relayout(node: EngineNode): void {
-    if (node.nodeKind !== 'element') return;
+    // A frame that only paints moved no box: see `layoutStale`.
+    if (node.nodeKind !== 'element' || this.paintOnly) return;
     // A box given other styles may give what is in it other room: see `settleFits`.
     if (node.propsDirty && this.fits.size && !this.settling) this.restyled.add(node);
     if (!(this.asked & CSS_LAYOUT)) {
@@ -7968,6 +8016,7 @@ export class Engine implements HostEngine {
     if (!this.askedLate.size) return;
     this.touch([...this.askedLate]);
     this.askedLate.clear();
+    this.paintOnly = false;
     this.commitTree();
   }
 
@@ -11557,8 +11606,9 @@ export class Engine implements HostEngine {
       return;
     }
     running.values = finished && !this.keeps(node, running) ? {} : values;
-    // Its end is still a commit: that is what its `animationend` is sent after.
-    if (!idle || finished) this.markProps(node, false);
+    // Its end is still a commit: that is what its `animationend` is sent after. Its last frame
+    // gives back what it held, which may be a size: a frame of layout.
+    if (!idle || finished) this.tick(node, frameKeys(values, finished));
 
     if (!finished) return;
     running.done = true;
@@ -11624,7 +11674,7 @@ export class Engine implements HostEngine {
           );
           live = true;
         }
-        this.markProps(node, false);
+        this.tick(node, [key]);
       }
       if (!live) this.running.delete(node);
     }
