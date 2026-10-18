@@ -21,6 +21,7 @@ import {
   usesActive,
   elementsAtEnd,
   hasAbove,
+  couldAsk,
   hasBeside,
   forgetHasAnswers,
   keepHasAnswers,
@@ -3206,6 +3207,32 @@ const emptyBrush = (value: unknown): boolean =>
   (value as { type?: unknown }).type === 0 &&
   (value as { payload?: unknown }).payload == null;
 
+/**
+ * What one pass of `markUnderHas` has reached after the boxes it asked: each box's place in its
+ * list, found once a list, and the elements reached for each rule's subjects. A list of a
+ * thousand boxes asked is looked through once, not once a box.
+ */
+class MarkedAfter {
+  private readonly lists = new Map<EngineNode, Map<EngineNode, number>>();
+  private readonly bySubjects = new Map<Subjects, Set<EngineNode>>();
+
+  place(node: EngineNode): number {
+    const list = node.parent!;
+    let places = this.lists.get(list);
+    if (!places) {
+      places = new Map(list.childList.map((child, at) => [child, at]));
+      this.lists.set(list, places);
+    }
+    return places.get(node)!;
+  }
+
+  reached(subjects: Subjects): Set<EngineNode> {
+    let reached = this.bySubjects.get(subjects);
+    if (!reached) this.bySubjects.set(subjects, (reached = new Set()));
+    return reached;
+  }
+}
+
 export class Engine implements HostEngine {
   /** Scopes the CSS resolver's memo. Bumped once per commit. */
   private styleEpoch = 0;
@@ -3410,7 +3437,9 @@ export class Engine implements HostEngine {
 
   /** A sheet has left play, by a hot swap or by being removed: what it asked goes with it. */
   private unwatchActive(sheet: StyleSheet): void {
-    if (this.activeBySheet.delete(sheet)) this.countActive();
+    if (!this.activeBySheet.delete(sheet)) return;
+    this.countActive();
+    this.trackMatched();
   }
 
   private countActive(): void {
@@ -3739,9 +3768,10 @@ export class Engine implements HostEngine {
    * or `.close:is(.animating *)`, the elements under the node that such rules are for. What is
    * under any of those is styled again from the rules it matched, for what it inherits: a `dark`
    * class on the root finds no rule again for an element no `dark` rule is for. One named in
-   * `:has()`, or answering a test of the class attribute there, has the boxes above the node
-   * asked again, and one named only in `:has(> )` the box right above it. Any other class has the node and everything under it matched again, as any
-   * other change to it does.
+   * `:has()`, or answering a test of the class attribute there, has the boxes above the node and
+   * those before it asked again, and one named only in `:has(> )` the box right above it. Any
+   * other class has the node and everything under it matched again, as any other change to it
+   * does.
    *
    * A sheet that names a class later restyles what it is for as it arrives, and a node not yet
    * committed is styled when it is, with the class as it is then.
@@ -3756,13 +3786,18 @@ export class Engine implements HostEngine {
     this.markProps(node, false);
     if (!reach) return;
     if (reach.own) node.ownDirty = true;
-    if (this.hasSheets && reach.beneath) this.markBeneath(node.parent, null, node);
-    // `:has(> .on)`: only the box right above the node can answer it.
-    else if (this.hasSheets && reach.parentHas) this.markBeneath(node.parent, node.parent?.parent);
+    if (this.hasSheets) this.markHasAsking(node, reach);
     if (this.styles.reachesUnder(reach)) {
       this.classesAbove += 1;
       this.markUnder(node, reach);
     }
+  }
+
+  /** Mark the boxes whose `:has()` can ask of a node whose classes changed, by `reach`. */
+  private markHasAsking(node: EngineNode, reach: Subjects): void {
+    if (reach.beneath) this.markBeneath(node.parent, node);
+    // `:has(> .on)`: only the box right above the node can answer it.
+    else if (reach.parentHas) this.markAsked(node.parent, node.parent?.parent);
   }
 
   /**
@@ -4356,7 +4391,7 @@ export class Engine implements HostEngine {
       // state, though nothing about the sibling moved. Only sheets that ask about siblings pay.
       // Not for a change `beside` says no rule asks of an element before another.
       if (this.structuralSheets && beside) this.markLaterSiblings(node);
-      if (this.hasSheets) this.markBeneath(node.parent, null, node);
+      if (this.hasSheets) this.markBeneath(node.parent, node);
     }
     // The root has no parent to carry the mark, so it carries its own: `.dark` on the root alone
     // restyles everything beneath it.
@@ -4386,30 +4421,33 @@ export class Engine implements HostEngine {
     if (!this.hasWatched.delete(sheet)) return;
     this.hasSheets = this.hasWatched.size > 0;
     this.hasBesideSheets = [...this.hasWatched.values()].some(Boolean);
+    this.trackMatched();
+  }
+
+  /**
+   * Have caches keep the rules each node matched while a sheet in play compares with them, and
+   * stop once none does. A sheet that asks about a place in a child list is never unset.
+   */
+  private trackMatched(): void {
+    const { own, elsewhere } = this.activeUse;
+    this.styles.tracksHas = this.hasSheets || this.structuralSheets || own || elsewhere.length > 0;
   }
 
   /**
    * Something at or beneath `from` changed: every node from there up may match a `:has()` rule
-   * it did not, or stop matching one, up to `upTo` and not it. They are matched again rather than
-   * marked for restyling, which would restyle everything under them. Only sheets that use
-   * `:has()` pay.
+   * it did not, or stop matching one. They are matched again rather than marked for restyling,
+   * which would restyle everything under them. Only sheets that use `:has()` pay. `changed` is
+   * the child of `from` that changed, or `at` where in its list one came or went.
    */
-  private markBeneath(
-    from: EngineNode | null,
-    upTo: EngineNode | null = null,
-    changed?: EngineNode,
-    at?: number,
-  ): void {
-    forgetHasAnswers();
-    const wasClean = !this.root.structureDirty && !this.root.subtreeDirty;
-    this.markAsking(from, upTo);
-    if (wasClean && this.root.subtreeDirty) this.onDirty?.();
-    if (!this.hasBesideSheets || !from) return;
-    this.markBefore(from, at ?? (changed ? from.childList.indexOf(changed) : 0));
+  private markBeneath(from: EngineNode | null, changed?: EngineNode, at?: number): void {
+    this.markAsked(from);
+    if (this.hasBesideSheets && from) this.markBeside(from, changed, at);
   }
 
-  /** Each box from `from` up to `upTo`, and not it, to be matched again for `:has()`. */
-  private markAsking(from: EngineNode | null, upTo: EngineNode | null): void {
+  /** The boxes from `from` up, to `upTo` and not it, to ask `:has()` again: see `markBeneath`. */
+  private markAsked(from: EngineNode | null, upTo: EngineNode | null = null): void {
+    forgetHasAnswers();
+    const wasClean = !this.root.structureDirty && !this.root.subtreeDirty;
     for (let node = from; node && node !== upTo; node = node.parent) {
       node.hasDirty = true;
       // Each is reached by the commit, though a box on the way was marked and not committed
@@ -4417,7 +4455,24 @@ export class Engine implements HostEngine {
       node.subtreeDirty = true;
       if (this.hasReaders.size) this.changedBeneath.add(node);
     }
+    if (wasClean && this.root.subtreeDirty) this.onDirty?.();
   }
+
+  /** `markBefore` for a change to `changed` in `parent`'s list, or one coming or going at `at`. */
+  private markBeside(parent: EngineNode, changed?: EngineNode, at?: number): void {
+    // One came or went at `at`: what is after it is not where it was marked.
+    if (at !== undefined && at < (this.markedBefore.get(parent) ?? 0)) {
+      this.markedBefore.set(parent, at);
+    }
+    this.markBefore(parent, at ?? (changed ? parent.childList.indexOf(changed) : 0));
+  }
+
+  /**
+   * By child list, how many of its first children `markBefore` has marked since the last commit,
+   * which marks no more of them again: a list that gains its items one at a time is not looked
+   * through once for each. A child coming or going before that many brings it down to where.
+   */
+  private readonly markedBefore = new Map<EngineNode, number>();
 
   /**
    * `:has(+ .x)` and `:has(~ .x .y)`: a change in `parent`'s list at `at` can change what the
@@ -4427,12 +4482,14 @@ export class Engine implements HostEngine {
   private markBefore(parent: EngineNode, at: number): void {
     let end = at;
     for (let list: EngineNode | null = parent; list;) {
-      for (let i = 0; i < end; i++) {
+      const marked = this.markedBefore.get(list) ?? 0;
+      for (let i = marked; i < end; i++) {
         const before = list.childList[i]!;
         if (before.nodeKind !== 'element') continue;
         before.hasDirty = true;
         if (this.hasReaders.size) this.changedBeneath.add(before);
       }
+      if (end > marked) this.markedBefore.set(list, end);
       const up: EngineNode | null = list.parent;
       if (up) end = up.childList.indexOf(list);
       list = up;
@@ -4465,10 +4522,11 @@ export class Engine implements HostEngine {
     const boxes = [...this.changedBeneath].sort((a, b) => depths.get(a)! - depths.get(b)!);
     // By box walked, the rules walked under it and under every box above it.
     const walked = new Map<EngineNode, ReadonlySet<HasAbove>>();
+    const after = new MarkedAfter();
     for (const node of boxes) {
       let above: ReadonlySet<HasAbove> | undefined;
       for (let up = node.parent; up && !above; up = up.parent) above = walked.get(up);
-      const all = this.markUnderBox(node, readers, above);
+      const all = this.markUnderBox(node, readers, above, after);
       if (all) walked.set(node, all);
     }
     this.changedBeneath.clear();
@@ -4482,28 +4540,35 @@ export class Engine implements HostEngine {
     node: EngineNode,
     readers: readonly HasAbove[],
     above: ReadonlySet<HasAbove> | undefined,
+    after: MarkedAfter,
   ): ReadonlySet<HasAbove> | undefined {
     const asked: HasAbove[] = [];
     for (const reader of readers) {
-      if (above?.has(reader) || !reader.classes.every((name) => node.classes?.has(name))) continue;
+      if (above?.has(reader) || !couldAsk(reader, node)) continue;
       asked.push(reader);
     }
     if (!asked.length) return above;
     const subjects = asked.map((reader) => reader.subjects);
     this.markUnder(node, subjects.length === 1 ? subjects[0]! : joinSubjects(subjects));
-    for (const reader of asked) if (reader.beside) this.markAfter(node, reader.subjects);
+    for (const reader of asked) if (reader.beside) this.markAfter(node, reader.subjects, after);
     return new Set([...(above ?? []), ...asked]);
   }
 
   /**
    * Have matched again each element after `node` that one of `subjects`' rules could be for, and
    * each under one of those: what `.card:has(.x) ~ .title` is for, where the card is `node`.
+   * One already reached for `subjects` in this pass had all after it reached with it.
    */
-  private markAfter(node: EngineNode, subjects: Subjects): void {
-    const siblings = node.parent?.childList ?? [];
-    for (let i = siblings.indexOf(node) + 1; i < siblings.length; i++) {
+  private markAfter(node: EngineNode, subjects: Subjects, after: MarkedAfter): void {
+    // The root, or a box taken out since, has nothing after it.
+    if (!node.parent) return;
+    const siblings = node.parent.childList;
+    const reached = after.reached(subjects);
+    for (let i = after.place(node) + 1; i < siblings.length; i++) {
       const sibling = siblings[i]!;
       if (sibling.nodeKind !== 'element') continue;
+      if (reached.has(sibling)) return;
+      reached.add(sibling);
       if (this.styles.isFor(subjects, sibling)) {
         sibling.ownDirty = true;
         this.markPath(sibling);
@@ -4546,7 +4611,7 @@ export class Engine implements HostEngine {
         this.markLaterSiblings(node);
       }
     }
-    if (this.hasSheets) this.markBeneath(node, null, undefined, at);
+    if (this.hasSheets) this.markBeneath(node, undefined, at);
     this.markPath(node.parent);
   }
 
@@ -4655,6 +4720,7 @@ export class Engine implements HostEngine {
       return this.commitWhole();
     } finally {
       keepHasAnswers(false);
+      this.markedBefore.clear();
     }
   }
 
@@ -4666,6 +4732,8 @@ export class Engine implements HostEngine {
     // frame, since any listener firing marks the view for refresh.
     this.settleCreated();
     this.markUnderHas();
+    // The marks are taken up by the commit from here: see `markedBefore`.
+    this.markedBefore.clear();
     if (!this.root.structureDirty && !this.root.subtreeDirty) return false;
 
     const started = now();
