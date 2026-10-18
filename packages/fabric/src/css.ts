@@ -1871,6 +1871,114 @@ const TWIN: Readonly<Record<'ltr' | 'rtl', Readonly<Record<string, string>>>> = 
   rtl: twins(SIDES_LTR.map(([logical, physical]) => [logical, mirrored(physical)] as const)),
 };
 
+/** The props of each edge of a box across and down, in each form Yoga or React Native reads. */
+const across = (box: string): string[] =>
+  ['Left', 'Right', 'Start', 'End', 'InlineStart', 'InlineEnd'].map((side) => `${box}${side}`);
+const down = (box: string): string[] =>
+  ['Top', 'Bottom', 'BlockStart', 'BlockEnd'].map((side) => `${box}${side}`);
+
+/** A box's shorthand for every edge, across and down, keyed by the name an inline style uses. */
+function boxShorthands(
+  all: string,
+  edges: { across: string[]; down: string[] },
+  axes: { across: string[]; down: string[] },
+): [string, string[]][] {
+  return [
+    [all, [...edges.across, ...edges.down, ...axes.across, ...axes.down]],
+    // An axis's own name among them is skipped as one the element sets itself.
+    ...axes.across.map((axis): [string, string[]] => [axis, [...edges.across, ...axes.across]]),
+    ...axes.down.map((axis): [string, string[]] => [axis, [...edges.down, ...axes.down]]),
+  ];
+}
+
+/** Every corner, physical and logical, by the name of its radius. */
+const CORNERS = [
+  ...['TopLeft', 'TopRight', 'BottomLeft', 'BottomRight', 'TopStart', 'TopEnd'],
+  ...['BottomStart', 'BottomEnd', 'StartStart', 'StartEnd', 'EndStart', 'EndEnd'],
+].map((corner) => `border${corner}Radius`);
+
+/**
+ * The props each shorthand an inline style can set covers, in every form a native view reads
+ * them: physical, logical and the aliases Yoga takes. A stylesheet's shorthand is compiled to its
+ * longhands, so only an element's own style commits one as it is written, and there CSS has it
+ * win over a rule's longhand, where Yoga and React Native read the more specific edge or corner.
+ */
+const COVERS: ReadonlyMap<string, readonly string[]> = new Map([
+  ...['margin', 'padding'].flatMap((box) =>
+    boxShorthands(
+      box,
+      { across: across(box), down: down(box) },
+      { across: [`${box}Horizontal`, `${box}Inline`], down: [`${box}Vertical`, `${box}Block`] },
+    ),
+  ),
+  ...boxShorthands(
+    'inset',
+    {
+      across: ['left', 'right', 'start', 'end', 'insetInlineStart', 'insetInlineEnd'],
+      down: ['top', 'bottom', 'insetBlockStart', 'insetBlockEnd'],
+    },
+    { across: ['insetInline'], down: ['insetBlock'] },
+  ),
+  ['gap', ['rowGap', 'columnGap']],
+  ['borderWidth', [...across('border'), ...down('border')].map((side) => `${side}Width`)],
+  ['borderColor', [...across('border'), ...down('border'), 'borderBlock'].map((s) => `${s}Color`)],
+  ['borderBlockColor', down('border').map((side) => `${side}Color`)],
+  ['borderRadius', CORNERS],
+]);
+
+/**
+ * Whether a value is several CSS values, `4px 8px` or `4px / 8px`, split on whitespace outside
+ * brackets. Native takes none of them for a side, so a side keeps its own.
+ *
+ * ponytail: a side keeps its own rather than taking its part of the value. The renderer's
+ * `longhands` splits `padding`, `margin`, `inset` and `gap` into their parts; the others can join it.
+ */
+function severalValues(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  let flat = value;
+  for (let inner = flat; (inner = flat.replace(/\([^()]*\)/g, '()')) !== flat;) flat = inner;
+  return flat.split(CSS_SPACE).filter(Boolean).length > 1;
+}
+
+/**
+ * Gives each prop in `style` that a shorthand the element sets itself covers the shorthand's
+ * value: one in its inline style, `inline`, or bound from a token, `bound`. The value rather than
+ * nothing, so a transition of the side eases to it, as in a browser. Not a prop the element sets
+ * as well, which Yoga reads over its shorthand as before, nor one a rule marked `!important`,
+ * which beats the element's own declaration.
+ */
+export function underOwnShorthands(
+  style: Record<string, unknown>,
+  inline: Readonly<Record<string, unknown>>,
+  bound: ReadonlyMap<string, unknown> | undefined,
+  important: ReadonlySet<string> | undefined,
+): void {
+  const cover = (shorthand: string) => {
+    const value = style[shorthand];
+    if (severalValues(value)) return;
+    for (const key of COVERS.get(shorthand) ?? []) {
+      if (!(key in style) || key in inline || bound?.has(key) || important?.has(key)) continue;
+      if (value == null) delete style[key];
+      else style[key] = value;
+    }
+  };
+  const set: string[] = [];
+  for (const key in inline) if (inline[key] != null && COVERS.has(key)) set.push(key);
+  if (bound) for (const key of bound.keys()) if (COVERS.has(key)) set.push(key);
+  // The one native reads last: React Native applies `paddingInline` over `paddingHorizontal`.
+  if (set.length > 1) set.sort((a, b) => rankOf(a) - rankOf(b));
+  for (const key of set) cover(key);
+}
+
+/**
+ * How late React Native applies a shorthand to an edge it shares with another
+ * (`YogaLayoutableShadowNode`): the box's own name, then its axis, then the logical axis.
+ */
+function rankOf(shorthand: string): number {
+  if (/(Inline|Block)$/.test(shorthand)) return 2;
+  return /(Horizontal|Vertical|BlockColor)$/.test(shorthand) ? 1 : 0;
+}
+
 /** The properties of a rule that have another form, plain and important, or null for neither. */
 interface Sided {
   readonly plain: readonly string[];

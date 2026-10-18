@@ -18,6 +18,7 @@ import {
   inlineInherited,
   setsInherited,
   StyleResolver,
+  underOwnShorthands,
   usesActive,
   elementsAtEnd,
   hasAbove,
@@ -5074,6 +5075,21 @@ export class Engine implements HostEngine {
     if (node === this.scrollHeld) merged['scrollEnabled'] = false;
   }
 
+  /**
+   * What an element sets itself, inline or bound from a token, over the cascade's other forms of
+   * it: the logical or physical side (`overOtherForms`) and the sides a shorthand covers
+   * (`underOwnShorthands`).
+   */
+  private ownOverCascade(
+    node: EngineNode,
+    inline: Readonly<Record<string, unknown>>,
+    style: Record<string, unknown>,
+  ): void {
+    if (inline !== NO_STYLE) this.styles.overOtherForms(inline, style);
+    if (inline === NO_STYLE && !node.boundByProp?.size) return;
+    underOwnShorthands(style, inline, node.boundByProp, node.styleCache?.important);
+  }
+
   private mergeProps(node: EngineNode, viewName: string): Record<string, unknown> {
     if (node.nodeKind === 'text') return { text: paragraphText(node) };
     if (this.dev) this.checkProps(node);
@@ -5088,7 +5104,7 @@ export class Engine implements HostEngine {
     const cascaded = props['transform'];
     const inline = inlineOf(node);
     const style = boundTransform(node, Object.assign(props, inline), cascaded);
-    if (inline !== NO_STYLE) this.styles.overOtherForms(inline, style);
+    this.ownOverCascade(node, inline, style);
     nativePointerEvents(node, style, resolved);
     // Before an image's own size: `fit-content` is no size, so the image's is what it gets.
     fitContent(node, style);
