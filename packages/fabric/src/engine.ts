@@ -4063,6 +4063,31 @@ const keeps = (actions: readonly string[] | undefined, pans: readonly string[]):
 /** How far a finger moves before a browser has settled which way a drag is going. */
 const DRAG_SLOP = 4;
 
+interface ViewNameRegistration {
+  readonly viewName: string | PlatformViewName;
+  readonly yielding: boolean;
+}
+
+/**
+ * What each element name was before it was first registered, and its registrations, oldest
+ * first: two packages can register one name and be taken away in either order.
+ */
+const registrations = new Map<
+  string,
+  {
+    original: { viewName?: string | PlatformViewName; yielding: boolean; text: boolean };
+    stack: ViewNameRegistration[];
+  }
+>();
+
+function nameView(elementName: string, { viewName, yielding }: ViewNameRegistration): void {
+  VIEW_NAMES[elementName] = viewName;
+  if (yielding) YIELDING.add(elementName);
+  else YIELDING.delete(elementName);
+  // A name the app registers is the app's: no longer decided by what the element holds.
+  TEXT_ELEMENTS.delete(elementName);
+}
+
 /**
  * Register a codegen'd third-party Fabric component, e.g.
  * `registerViewName('rns-screen', 'RNSScreen')`, which is how the router reaches
@@ -4078,12 +4103,19 @@ export function registerViewName(
   viewName: string | PlatformViewName,
   defaultProps?: Record<string, unknown>,
   options?: ViewNameOptions,
-): void {
-  VIEW_NAMES[elementName] = viewName;
-  if (options?.yieldsToComponents) YIELDING.add(elementName);
-  else YIELDING.delete(elementName);
-  // A name the app registers is the app's: no longer decided by what the element holds.
-  TEXT_ELEMENTS.delete(elementName);
+): () => void {
+  const entry = registrations.get(elementName) ?? {
+    original: {
+      viewName: VIEW_NAMES[elementName],
+      yielding: YIELDING.has(elementName),
+      text: TEXT_ELEMENTS.has(elementName),
+    },
+    stack: [],
+  };
+  const registration = { viewName, yielding: options?.yieldsToComponents === true };
+  entry.stack.push(registration);
+  registrations.set(elementName, entry);
+  nameView(elementName, registration);
   for (const name of typeof viewName === 'string' ? [viewName] : [viewName.ios, viewName.android]) {
     if (defaultProps) DEFAULT_PROPS[name] = defaultProps;
     if (options?.textContent) TEXT_CONTENT_PROPS[name] = options.textContent;
@@ -4092,6 +4124,24 @@ export function registerViewName(
     if (options?.fontNames) FONT_NAMES[name] = options.fontNames;
     else delete FONT_NAMES[name];
   }
+  // Takes this registration away, for a package that registers a name for as long as an app that
+  // asked for it is up. The newest one still there names the element, and what it was before any
+  // comes back after the last. The native view's own defaults and text prop stay: they are the
+  // view's, whichever element names it.
+  return () => {
+    const index = entry.stack.indexOf(registration);
+    if (index === -1) return;
+    entry.stack.splice(index, 1);
+    const top = entry.stack.at(-1);
+    if (top) return nameView(elementName, top);
+    registrations.delete(elementName);
+    const { original } = entry;
+    if (original.viewName === undefined) delete VIEW_NAMES[elementName];
+    else VIEW_NAMES[elementName] = original.viewName;
+    if (original.yielding) YIELDING.add(elementName);
+    else YIELDING.delete(elementName);
+    if (original.text) TEXT_ELEMENTS.add(elementName);
+  };
 }
 
 /** What else a registered view needs the engine to know about it. */
@@ -4261,7 +4311,7 @@ export interface PlatformViewName {
 }
 
 /** An element's registered view name, for the platform the host reported. */
-function registeredViewName(elementName: string): string | undefined {
+export function registeredViewName(elementName: string): string | undefined {
   const name = VIEW_NAMES[elementName];
   if (name === undefined || typeof name === 'string') return name;
   return platformOS === 'android' ? name.android : name.ios;
@@ -5217,6 +5267,171 @@ class RetainedNode {
     byType?.get(type)?.();
     byType?.delete(type);
   }
+}
+
+/**
+ * Every field the engine keeps on a node, including the ones it assigns only later, in a commit:
+ * an extension may shadow none of them, or the engine's own write would go through the
+ * extension's getter. Typed against `EngineNode`, so a field added there and not here fails the
+ * typecheck.
+ */
+const ENGINE_NODE_FIELDS = {
+  nodeKind: true,
+  tag: true,
+  tagName: true,
+  props: true,
+  nodeText: true,
+  childList: true,
+  parent: true,
+  listeners: true,
+  classes: true,
+  templateSheet: true,
+  hostSheet: true,
+  customProperties: true,
+  styleCache: true,
+  styleDirty: true,
+  ownDirty: true,
+  hasDirty: true,
+  stateDirty: true,
+  heldFamily: true,
+  inlineInherits: true,
+  boundStyle: true,
+  boundByProp: true,
+  touchWithin: true,
+  box: true,
+  words: true,
+  anonymous: true,
+  styled: true,
+  focused: true,
+  active: true,
+  ownStyle: true,
+  styleCommitted: true,
+  fitContainer: true,
+  inlineLevel: true,
+  scrollView: true,
+  lined: true,
+  boxed: true,
+  flow: true,
+  resolved: true,
+  sticky: true,
+  fixedTo: true,
+  ordered: true,
+  fit: true,
+  fitMin: true,
+  fitOff: true,
+  mixed: true,
+  mixedOff: true,
+  line: true,
+  autoMin: true,
+  shareMin: true,
+  shareOff: true,
+  row: true,
+  grid: true,
+  gridIn: true,
+  flowIn: true,
+  heightBasis: true,
+  heldAt: true,
+  transitions: true,
+  playing: true,
+  scrolled: true,
+  owned: true,
+  composedTransform: true,
+  bornIn: true,
+  boundTransform: true,
+  claimed: true,
+  componentHost: true,
+  nativeView: true,
+  attributeOnly: true,
+  writes: true,
+  paintsOn: true,
+  paintTaker: true,
+  paintTaken: true,
+  defaultStyle: true,
+  dormantHoists: true,
+  committed: true,
+  committedUnder: true,
+  kept: true,
+  onBaseline: true,
+  baselineFields: true,
+  remeasure: true,
+  oneWord: true,
+  raised: true,
+  presented: true,
+  propsDirty: true,
+  structureDirty: true,
+  subtreeDirty: true,
+  engine: true,
+} satisfies Record<keyof EngineNode, true>;
+
+/** The fields an extension may not shadow: the engine's, and the one Angular assigns. */
+const NODE_FIELDS = new Set([...Object.keys(ENGINE_NODE_FIELDS), '__ngContext__']);
+
+/**
+ * Give every node members of a package's own, on the prototype they share: a getter, a method.
+ * Returns what takes them away again.
+ *
+ * For a package that presents nodes to code written against another API, as a web-compatibility
+ * layer answers `getAttribute` and `closest` from a node's name and props. A field the engine
+ * keeps on a node (`nodeKind`, `props`, `childList`) is refused. A member a node already has on the
+ * prototype (`classList`, `addEventListener`) is replaced, and put back when the extension is
+ * taken away: what replaces it has to do what the original did for Angular.
+ */
+export function extendNodes(members: PropertyDescriptorMap & ThisType<EngineNode>): () => void {
+  const names = Object.keys(members);
+  for (const name of names) {
+    if (NODE_FIELDS.has(name)) {
+      throw new Error(`[angular-native] extendNodes: '${name}' is a field the engine keeps.`);
+    }
+  }
+  const added: [string, PropertyDescriptor][] = [];
+  const remove = () => {
+    for (const [name, descriptor] of added.splice(0)) removeMember(name, descriptor);
+  };
+  try {
+    for (const name of names) {
+      // Configurable whatever the descriptor says, or it could not be taken away again.
+      const descriptor = { ...members[name], configurable: true };
+      addMember(name, descriptor);
+      added.push([name, descriptor]);
+    }
+  } catch (error) {
+    // A descriptor the runtime refuses: the ones before it do not stay behind.
+    remove();
+    throw error;
+  }
+  return remove;
+}
+
+/**
+ * What each extended member was before any extension, and the extensions' own descriptors for it,
+ * oldest first. Two extensions can give the same member, and be taken away in either order: the
+ * newest still there is the one a node has, and the original comes back after the last.
+ */
+const extended = new Map<string, { original?: PropertyDescriptor; stack: PropertyDescriptor[] }>();
+
+function addMember(name: string, descriptor: PropertyDescriptor): void {
+  const prototype = RetainedNode.prototype;
+  const entry = extended.get(name) ?? {
+    original: Object.getOwnPropertyDescriptor(prototype, name),
+    stack: [],
+  };
+  // First, so a descriptor the runtime refuses is never recorded.
+  Object.defineProperty(prototype, name, descriptor);
+  entry.stack.push(descriptor);
+  extended.set(name, entry);
+}
+
+function removeMember(name: string, descriptor: PropertyDescriptor): void {
+  const prototype = RetainedNode.prototype;
+  const entry = extended.get(name);
+  const index = entry?.stack.indexOf(descriptor) ?? -1;
+  if (!entry || index === -1) return;
+  entry.stack.splice(index, 1);
+  const top = entry.stack.at(-1);
+  if (top) return void Object.defineProperty(prototype, name, top);
+  extended.delete(name);
+  if (entry.original) Object.defineProperty(prototype, name, entry.original);
+  else Reflect.deleteProperty(prototype, name);
 }
 
 /**
