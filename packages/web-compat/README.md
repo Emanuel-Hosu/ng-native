@@ -82,6 +82,11 @@ Experimental and partial. It has:
 - A `<button>` and an `<a>` with their roles, each taking a press with no listener (`:active`
   while held) and marked `data-hover` while a pointer is over it, a disabled one announced as
   disabled, and a table's and a form's elements as views.
+- The page's address: `document.URL`, `baseURI` and `<base href>`, `window.location`, a link's
+  `href` and the parts of its URL, the other URLs an element's attributes say, resolved against
+  it, and `:target`.
+- `<iframe>`, as a native web view or as a document of its own, with `contentWindow`,
+  `postMessage` both ways, and `window.frames`.
 - A `click` listener that hears a press.
 - Forms: an `<input>` and a `<textarea>` are the platform's text field, with `value` and
   `defaultValue`, its keys, `change` once an edit ends, the keyboard its `type` and `inputmode`
@@ -113,6 +118,9 @@ export const appConfig = {
   providers: [provideWebCompat()],
 };
 ```
+
+It gives Angular's `Location` a platform to stand on in an app with no router. In an app with the
+native router, `Location` is the router's, in whichever order the two are listed.
 
 ## Name what is written for a browser
 
@@ -146,3 +154,66 @@ import { provideBrowserPlatformId } from '@ng-native/web-compat';
 })
 export class SettingsPage {}
 ```
+
+## The page's address
+
+The page is at the app's own URL, with the route the app is on: `document.URL`,
+`document.baseURI` and `window.location` say it, and a relative link, an image's `src` and the
+other URLs an element's attributes say resolve against it, as a browser resolves them against
+the address of the page it shows. A `<base href>` in the head changes what they resolve against.
+
+The app's URL is the one Expo opens the app with: `exp://127.0.0.1:8081/--/` in Expo Go, and the
+app config's `scheme` in a build, so `canary://` is a page at `canary:///settings`. An app with
+neither is at `app://`. Give it one that wins over both:
+
+```ts
+provideWebCompat({ url: 'https://shop.example/' });
+```
+
+`location.assign()`, `replace()` and setting `href` or a part of it go to a page of the app the
+way a link to it does, through the router, and open any other URL with `Linking`. In an app
+without the native router, a page of the app goes nowhere. `reload()` does nothing.
+
+## Frames
+
+An `<iframe>` is a native web view, from `react-native-webview`, which shows the page in it as a
+browser does, its scripts included. Install it in an app that has a frame:
+
+```sh
+npx expo install react-native-webview
+```
+
+`src` resolves against the page's address, and `srcdoc` is shown with the page's address as its
+base where that is an `http`, `https` or `file` address and no `sandbox` takes the frame's origin
+away. A frame is 300 by 150 points, as in a browser, under its
+`width` and `height` and any stylesheet, and hears `load` as its page finishes loading.
+
+The app has the frame as a browser has a frame of another origin: `contentDocument` is `null`,
+and the two talk with `postMessage`. `iframe.contentWindow.postMessage(data, origin)` is a
+`message` event in the page, from the app's origin, whose `source` the page answers through. The
+page's `window.parent.postMessage(data, origin)`, and `window.ReactNativeWebView.postMessage`,
+are a `message` event on the app's `window`, whose `source` is the frame's `contentWindow`.
+The `postMessage` methods cross as JSON; what `ReactNativeWebView.postMessage` sends arrives as
+the string it is.
+
+The page is sent as the frame's `Referer`, as `referrerpolicy` says, where its address is a web
+address: a video embed that asks who embeds it needs `provideWebCompat({ url })` to be one in
+Expo Go, whose `exp://` address is not. `sandbox` without `allow-scripts` runs no script, and
+`allow` turns on autoplay, fullscreen and picture in picture where it lists them. `loading` and
+the rest of `sandbox` are left out, and development says so.
+
+`sandbox` without `allow-same-origin` gives the frame the origin `null` in the messages the app
+sends and hears, and shows `srcdoc` with no base. A native web view cannot give a page no origin,
+so a `src` page in such a sandbox still loads at its own origin, with its storage and cookies,
+and development says so. The sandbox says who the app talks to; it does not isolate the page.
+
+Where `react-native-webview` is not installed, and in Node, a frame is an emulated document
+instead: a document of the app's own, from `about:blank`, `srcdoc` or what `src` names, which a
+script reads and writes as one of its own origin. It is not drawn and no script in it runs. Ask
+for it in an app that measures or prints in a frame, and in a test that reads a frame's document:
+
+```ts
+provideWebCompat({ frames: 'emulated' });
+```
+
+`loadFrame` reads what an emulated frame's `src` names, with `fetch` where it is not given.
