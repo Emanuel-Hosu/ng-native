@@ -1164,6 +1164,44 @@ function unheld(parts) {
 
 const TRANSFORM_FUNCTIONS = /^(translate|scale|rotate|skew)(X|Y|Z|3d)?$/i;
 
+/** The pseudo-elements a browser draws a box for inside the element, first and last. */
+const GENERATED = new Set(['before', 'after']);
+
+/**
+ * A rule with each `X::before` and `X::after` among its selectors as `X > ::before`: a rule for
+ * an element of that name under X, which is what the engine keeps there for the box. Only for a
+ * sheet compiled with `generated`; any other is refused its pseudo-elements where they are read.
+ */
+function withGeneratedBoxes(rule) {
+  const selectors = rule.value.selectors.map((parts) => {
+    const last = parts.at(-1);
+    if (last?.type !== 'pseudo-element' || !GENERATED.has(last.kind)) return parts;
+    const box = { type: 'type', name: `::${last.kind}` };
+    return [...parts.slice(0, -1), { type: 'combinator', value: 'child' }, box];
+  });
+  return { ...rule, value: { ...rule.value, selectors } };
+}
+
+const isContent = (declaration) =>
+  declaration.property === 'custom' && declaration.value?.name === 'content';
+
+/**
+ * What a `content` makes of a generated box: `none` for no box at all, or the string written,
+ * which the engine draws as the box's text. Null for a value it cannot draw, which is no box and
+ * is reported.
+ *
+ * ponytail: a `content` of anything but one string, an `attr()` or a counter, is no box. Read
+ * each when a library is seen to need one.
+ */
+function contentOf(declaration) {
+  const terms = meaningful(declaration.value.value);
+  const [first] = terms;
+  if (terms.length !== 1 || first.type !== 'token') return null;
+  if (first.value.type === 'string') return first.value.value;
+  const word = first.value.type === 'ident' ? first.value.value : '';
+  return word === 'none' || word === 'normal' ? 'none' : null;
+}
+
 /** A rule with only its declarations that have a `light-dark()` in them, on their dark side. */
 function darkSide(rule) {
   const { declarations, importantDeclarations } = rule.value.declarations;
@@ -2604,6 +2642,8 @@ function undrawn(name, context) {
  *   the app's own fails the build, where the mistake is its author's to see. `asset` is given each
  *   font's url and the line of the sheet it is on, and answers the path to require it by: a caller
  *   that joined sheets from several directories resolves each url against its own sheet.
+ *   `generated` reads `::before` and `::after` as a browser does, as boxes of their own with the
+ *   `content` they are given, for a library's sheet the build is told was written for one.
  */
 function compileCss(source, context = 'styles', options = {}) {
   const rules = [];
@@ -2685,6 +2725,15 @@ function compileCss(source, context = 'styles', options = {}) {
     }
   }
 
+  /** A generated box's `content`, or `none` and the report of why where it is one no box draws. */
+  function declareContent(declaration, out, context) {
+    const content = contentOf(declaration);
+    out.content = content ?? 'none';
+    if (content !== null) return;
+    const why = 'a generated box draws one string, so it draws none for this';
+    onUnsupported?.(reported(context, "dropped 'content'", why));
+  }
+
   /**
    * A part put together once its rule is read, as a transition is from its longhands, or with
    * `onUnsupported` given, the report of why it was dropped. It is reported as the declaration it
@@ -2749,9 +2798,10 @@ function compileCss(source, context = 'styles', options = {}) {
   }
 
   /** Compile one plain style rule into the flat list. */
-  function styleRule(rule) {
-    const context = locationOf(rule);
-    if (rule.type !== 'style') throw refusedAtRule(rule, context);
+  function styleRule(written) {
+    const context = locationOf(written);
+    if (written.type !== 'style') throw refusedAtRule(written, context);
+    const rule = options.generated ? withGeneratedBoxes(written) : written;
 
     // Compiled once per set of platforms its selectors can apply on, because a declaration one
     // platform ignores is refused only where it could apply there. A selector list is one rule to
@@ -2970,6 +3020,10 @@ function compileCss(source, context = 'styles', options = {}) {
       for (const stated of list ?? []) {
         const declaration = ownToken(stated, raw);
         if (declaration === null) continue;
+        if (options.generated && isContent(declaration)) {
+          declareContent(declaration, out, context);
+          continue;
+        }
         if (easedByToken(declaration, out, deferred, context)) continue;
         if (timedByToken(declaration, out, context)) continue;
         const before = deferred.length;
@@ -3157,8 +3211,16 @@ function compileCss(source, context = 'styles', options = {}) {
     ...(fonts.length ? { fonts } : {}),
     ...(Object.keys(keyframes).length ? { keyframes } : {}),
     ...invalidation(rules),
+    // Said on the sheet as `structural` is: the engine looks for the boxes only where one is.
+    ...(rules.some(drawsABox) ? { generated: true } : {}),
   };
 }
+
+/** Whether a rule is for a generated box, `::before` or `::after`. */
+const drawsABox = (rule) => {
+  const type = rule.compounds[rule.compounds.length - 1]?.type;
+  return type === '::before' || type === '::after';
+};
 
 /** The element that draws a background through its letters. */
 const GRADIENT_TEXT = 'gradient-text';

@@ -556,6 +556,11 @@ export interface StyleSheet {
    */
   readonly structural?: true;
   /**
+   * Some rule is for a generated box, `::before` or `::after`, which only a sheet compiled to
+   * draw them has. Said on the sheet so the engine reads the rules of no other for one.
+   */
+  readonly generated?: true;
+  /**
    * Some rule uses `:has()`, so what a node matches can change when something beneath it does.
    * Said on the sheet for the same reason `structural` is: the cost is invalidation, and only a
    * sheet that asks has the engine match a changed node's ancestors again.
@@ -645,10 +650,11 @@ export interface StyleCache {
 
 /**
  * Whether a child is one `:empty` sees. An anchor is a comment on the web, which it does not;
- * nor text of no length, which a binding to nothing leaves behind.
+ * nor text of no length, which a binding to nothing leaves behind; nor a box a rule generated,
+ * which is not in the tree a selector is matched against.
  */
 export function fills(child: StyleTarget): boolean {
-  if (child.nodeKind === 'anchor') return false;
+  if (child.nodeKind === 'anchor' || (boxesDrawn && isGenerated(child.tag))) return false;
   return child.nodeKind !== 'text' || (child as { nodeText?: string }).nodeText !== '';
 }
 
@@ -1006,6 +1012,23 @@ function matchesEach(node: StyleTarget, compound: Compound, sheet: StyleSheet | 
  * same thing. It is also the hottest function in the matcher, called tens of thousands of times
  * per commit, so splitting each guard into its own call would cost more than it reads better.
  */
+/** The first character of a generated box's tag, `::before` or `::after`. */
+const COLON = 58;
+
+/**
+ * Whether any sheet in the process has drawn a generated box: until one has, no node is one, and
+ * the checks for one below cost a boolean read. Set once and left set.
+ *
+ * ponytail: never turned off again, as the checks are only a cost once it is on; count the
+ * engines with boxes if an app that drops its last library sheet needs the matching back.
+ */
+let boxesDrawn = false;
+
+/** Note that a sheet in play draws generated boxes: see `boxesDrawn`. */
+export function noteGeneratedBoxes(): void {
+  boxesDrawn = true;
+}
+
 // eslint-disable-next-line complexity
 function matchesCompound(node: StyleTarget, compound: Compound, sheet: StyleSheet | null): boolean {
   styleStats.compoundTests++;
@@ -1016,7 +1039,11 @@ function matchesCompound(node: StyleTarget, compound: Compound, sheet: StyleShee
       if (state === 'focus' ? !node.focused : !node.active) return false;
     }
   }
-  if (compound.type !== undefined && compound.type !== node.tag) return false;
+  if (compound.type !== undefined) {
+    if (compound.type !== node.tag) return false;
+    // A generated box is no element to a compound that names none, `*` or a class alone, as a
+    // pseudo-element is none in a browser: one character told from any element's name.
+  } else if (boxesDrawn && node.tag.charCodeAt(0) === COLON) return false;
   if (compound.own !== undefined && !ownedBy(node, compound, sheet)) return false;
   if (compound.id !== undefined && node.props['nativeID'] !== compound.id) return false;
   for (const className of compound.classes) {
@@ -1491,7 +1518,16 @@ function takesParents(rule: StyleRule): boolean {
 }
 
 /** Whether a node is one of the children CSS counts. Text and anchors are children, not elements. */
-const isElement = (node: StyleTarget) => node.nodeKind === undefined || node.nodeKind === 'element';
+const isElement = (node: StyleTarget) =>
+  // Asked of each sibling a rule counts: told from a generated box here, without a call.
+  (node.nodeKind === undefined || node.nodeKind === 'element') &&
+  !(boxesDrawn && node.tag.charCodeAt(0) === COLON);
+
+/**
+ * Whether an element's name is a generated box's, `::before` or `::after`: a child the engine
+ * keeps for a rule that draws one, which no selector counts among the element's children.
+ */
+export const isGenerated = (name: string): boolean => name.startsWith('::');
 
 /** A node's first `count` elements, or its last, skipping everything that is not one. */
 export function elementsAtEnd<T extends StyleTarget>(
@@ -2327,16 +2363,21 @@ export function ruleKey(rule: StyleRule): string {
  * `:is()` of compounds that each have a key: it is filed under each of theirs, since a node it
  * matches has one of them.
  *
- * A rule that says nothing of the node's own name can still say whose child it is, `.row > *`.
- * It is filed under the parent's class, and offered to the children of an element that has it.
+ * Two kinds of rule say nothing of the node's own name and still say whose child it is: one for
+ * a generated box, `.card::before`, which is `.card > ::before` here, and one for any child,
+ * `.row > *`. Each is filed under the parent's class, and offered to the children of an element
+ * that has it. Filed by the box's own name, every `::before` rule there is would be offered to
+ * every such box.
  */
 export function ruleKeys(rule: StyleRule): readonly string[] {
   const key = rule.compounds[rule.compounds.length - 1];
   if (!key) return EVERY_NODE;
   if (key.classes.length) return [`class:${key.classes[0]}`];
   if (key.id !== undefined) return [`id:${key.id}`];
-  if (key.type !== undefined) return [`type:${key.type}`];
   const held = parentClass(rule, key);
+  if (key.type !== undefined && !(held !== undefined && isGenerated(key.type))) {
+    return [`type:${key.type}`];
+  }
   if (held !== undefined) return [`in:${held}`];
   return alternativeKeys(key) ?? attributeKey(key) ?? ancestorKeys(rule, key) ?? EVERY_NODE;
 }
@@ -3418,6 +3459,8 @@ export class StyleResolver {
    */
   private readonly deepSheets = new Set<StyleSheet>();
   private readonly deepIndexes = new WeakMap<StyleSheet, RuleIndex>();
+  /** Each component sheet's rules for a box of its host: see `hostBoxIndex`. */
+  private readonly hostBoxIndexes = new WeakMap<StyleSheet, RuleIndex>();
 
   /**
    * Read the classes a sheet names, once, as soon as any node is given it. One `scoped` to a
@@ -3816,6 +3859,8 @@ export class StyleResolver {
     return (
       node.templateSheet === null &&
       node.hostSheet === null &&
+      // A generated box matches the `:host::before` of the component its element hosts.
+      !(boxesDrawn && node.tag.charCodeAt(0) === COLON && node.parent?.hostSheet) &&
       this.deepSheets.size === 0 &&
       this.globalSheet === null &&
       this.addedSheets.length === 0 &&
@@ -3905,6 +3950,11 @@ export class StyleResolver {
     if (this.globalSheet) this.placeLayers(this.globalSheet);
     const indexes: RuleIndex[] = [];
     if (node.hostSheet) indexes.push(this.ownIndex(node.hostSheet, HOSTS));
+    // A generated box is tried against the rules of the component its element hosts too, where
+    // `:host::before` is written: it is no host itself, so a bare `:host` rule still misses it.
+    const host =
+      boxesDrawn && node.tag.charCodeAt(0) === COLON ? node.parent?.hostSheet : undefined;
+    if (host) indexes.push(this.hostBoxIndex(host));
     if (node.templateSheet) indexes.push(this.ownIndex(node.templateSheet, CREATED));
     if (this.deepSheets.size) this.reachedFromAbove(node, indexes);
     indexes.push(this.sharedIndex());
@@ -3921,6 +3971,23 @@ export class StyleResolver {
       if (!sheet || sheet === node.templateSheet || sheet === node.hostSheet) continue;
       if (this.deepSheets.has(sheet)) indexes.push(this.deepIndex(sheet));
     }
+  }
+
+  /**
+   * A sheet's rules for a box of its host alone, `:host::before` and `:host(.x)::after`, filed as
+   * a component's own are. Its other rules for a box are for the elements of its template, which
+   * is how emulated encapsulation scopes them on the web: `.icon::before` in it never reaches the
+   * box of a host its parent puts the class `icon` on.
+   */
+  private hostBoxIndex(sheet: StyleSheet): RuleIndex {
+    let index = this.hostBoxIndexes.get(sheet);
+    if (!index) {
+      const boxes = this.entries(sheet, COMPONENT_SPECIFICITY_BUMP).filter(
+        ({ rule }) => rule.compounds.at(-2)?.host !== undefined,
+      );
+      this.hostBoxIndexes.set(sheet, (index = indexRules(boxes, undefined, HOSTS * SHEET_ROOM)));
+    }
+    return index;
   }
 
   /** A sheet's `::ng-deep` rules alone, filed as a component's own are. */
