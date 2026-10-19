@@ -9,9 +9,10 @@ import { documentOf, eventPath, nameOf } from './document.ts';
 import { isFragment } from './document-fragment.ts';
 import { documentOfRoot, topOf } from './document-roots.ts';
 import { required } from './dom-error.ts';
+import { marksHover } from './elements.ts';
 import { dispatch, listen, unlisten, type Heard } from './events.ts';
 import { inDocument, isInDocument, lastInDocument } from './in-document.ts';
-import { listenNatively, hasCapture, topLevel } from './listen.ts';
+import { announcesDisabled, listenNatively, hasCapture, topLevel } from './listen.ts';
 import { observing, removingAttribute, settingAttribute, together } from './mutation-observer.ts';
 import { NODE_CONSTANTS } from './node-constants.ts';
 import { isProcessingInstruction, targetOf } from './processing-instruction.ts';
@@ -127,7 +128,17 @@ function setAsWritten(node: EngineNode, name: string, value: unknown): void {
 function hasAttribute(node: EngineNode, name: string): boolean {
   if (name === 'class') return classAttribute(node) !== null;
   if (name === 'style') return written.get(node)?.has(name) ?? false;
-  return node.props[propOf(name)] != null;
+  return attributeOf(node, name) !== null;
+}
+
+/**
+ * Whether a prop is a state this package gives an element, which is no attribute of it: the
+ * `aria-disabled` a `disabled` announces, and the `data-hover` a pointer over it gives (see
+ * `giveRole`).
+ */
+function isEngineState(node: EngineNode, key: string): boolean {
+  if (key === 'aria-disabled') return announcesDisabled(node);
+  return key === 'data-hover' && marksHover(node);
 }
 
 /** An attribute as `getAttribute` answers it: the text written, or what the prop says. */
@@ -135,6 +146,7 @@ function attributeOf(node: EngineNode, name: string): string | null {
   if (name === 'class') return classAttribute(node);
   const text = written.get(node)?.get(name);
   if (name === 'style') return text ?? null;
+  if (text === undefined && isEngineState(node, name)) return null;
   const value = node.props[propOf(name)];
   if (value == null) return null;
   if (typeof value !== 'boolean') return String(value);
@@ -224,14 +236,15 @@ function attributeNamed(node: EngineNode, given: unknown, writing = false): stri
 
 /**
  * The props an element is given for its native view, which are no attribute of it: whether it is
- * an element of its own to accessibility and can be focused, what draws an image, and every name
- * written as a native prop's is (`accessibilityRole`, `pointerEvents`). One a script or markup set
- * is one all the same.
+ * an element of its own to accessibility and can be focused, what draws an image, every name
+ * written as a native prop's is (`accessibilityRole`, `pointerEvents`), and the states this
+ * package gives one (see `isEngineState`). One a script or markup set is one all the same.
  */
 const NATIVE_ONLY =
   /^(accessible|focusable|collapsable|source|editable|multiline|responsible)$|[a-z][A-Z]/;
 function isNativeOnly(node: EngineNode, key: string): boolean {
   if (key === 'nativeID' || written.get(node)?.has(key)) return false;
+  if (isEngineState(node, key)) return true;
   // A field's width in characters and what is typed in it.
   if (key === 'size' || key === 'text') return node.tag === 'input' || node.tag === 'textarea';
   return NATIVE_ONLY.test(key);
