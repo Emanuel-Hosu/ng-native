@@ -42,10 +42,12 @@ native, and a stylesheet written for the web puts its tokens there.
 
 A rule with one of these selectors is dropped with a warning.
 
-`::before`, `::after` and every other pseudo-element are permanently unsupported, not a "not yet".
-Rendering one would mean synthesizing a node no template declared, which would make the style
-engine responsible for view hierarchy a template never wrote - so the fix, when a design wants one,
-is to write the element.
+In an app's own sheet, `::before`, `::after` and every other pseudo-element are unsupported, not a
+"not yet". Rendering one would mean synthesizing a node no template declared, which would make the
+style engine responsible for view hierarchy a template never wrote - so the fix, when a design
+wants one, is to write the element. A
+[sheet read as a browser reads it](#a-sheet-read-as-a-browser-reads-it), for components written for
+one, is the exception for `::before` and `::after`.
 
 `::placeholder` is the exception, because it needs no node: a text input draws its own placeholder,
 and its `placeholderTextColor` is the colour. `.field::placeholder { color: #8b8b96 }`, or
@@ -68,7 +70,8 @@ already point at them for you.
 `:checked`, `:indeterminate`, `:valid`, `:invalid`, `:placeholder-shown` and the other form-state
 pseudo-classes are unsupported too: a native control keeps that state in its component's inputs,
 where no selector can see it. Bind an attribute from the same signal (`[attr.data-checked]`) and
-select on that.
+select on that. A [sheet read as a browser reads it](#a-sheet-read-as-a-browser-reads-it) reads
+`:checked`, `:indeterminate` and `:enabled` from the element's own props.
 
 `:has()` styles a node by what is beneath it, or after it. Its argument is any relative
 selector: a descendant (`.card:has(.action)`), a child (`.card:has(> img)`), a longer selector
@@ -374,7 +377,9 @@ than `visible` shrinks as it does in a browser. A native view has no minimum unl
 one, so nothing changes for an item that does not say `auto`.
 
 `overflow` is one value for both axes - Yoga has no separate `overflow-x`/`overflow-y` - so a rule
-that gives them different values is dropped with a warning rather than silently picking one.
+that gives them different values is dropped with a warning rather than silently picking one, and
+so is `overflow-x` or `overflow-y` on its own, outside a
+[sheet read as a browser reads it](#a-sheet-read-as-a-browser-reads-it).
 `overflow: auto` is read as `scroll`, which is how Yoga lays out a scroll container, and `clip` as
 `hidden`. `cursor` takes `auto` and `pointer`, the two a pointer on an iPad draws, with `default`
 read as `auto`; any other cursor is dropped with a warning. So is a `mix-blend-mode` native does not
@@ -479,13 +484,14 @@ every argument is absolute. A `calc()` may have any number of tokens in it, with
 absolute lengths, `+ - * /` and brackets: `calc((var(--end) - var(--start)) * 1px)` is worked
 out on device, where a token that is a length counts in points and a bare number multiplies. A
 percentage, an em or a viewport unit beside a token is dropped, since it needs layout the device
-does not do there.
+does not do there, except a percentage added to a token for the properties below.
 
 `calc()` may also add a length to a percentage, `calc(100% - 2rem)`, for a box's `width` and
 `height`, their minimums and maximums, its insets, its margins and its padding: Tailwind's
 `max-w-[calc(100%-2rem)]`. And for `translate`, where the percentage is of the box's own size:
 `translate-x-[calc(100%-2px)]`, which is how a switch's thumb slides over. The length is in
-points or rem. Yoga takes a number or a percentage
+points or rem, or a token, `calc(100% - var(--handle))`, which is settled where the box is and
+follows the token changing. Yoga takes a number or a percentage
 and not their sum, so the engine commits the box with the declaration set aside, reads the box
 the percentage is of, and commits it at what the sum comes to, all in the one task. That is two
 more commits when the box or anything in it changes, and one read on every commit after. A
@@ -530,6 +536,33 @@ Transitions, `animate.enter`/`animate.leave`, `@keyframes` and `animation` are t
 
 `tint-color` is native's own, with no counterpart on the web: the color an image is drawn in, and
 the color of an SF Symbol. It takes a token as any color does.
+
+## A sheet read as a browser reads it
+
+A sheet compiled for components written for a browser, as the Tailwind sheet is when its
+[`browser` option](/packages/tailwind) is set, reads a few things an app's own sheet is told to
+write another way:
+
+- `::before` and `::after` are boxes of their own, as in a browser: the engine keeps a view first
+  in the element for `::before` and last for `::after`, styled by the rules written for it,
+  wherever a rule gives it a `content`. A string `content` is the text the box holds, and
+  `content: ""` an empty box; `none`, no `content`, or an `attr()` or counter draws no box. The box
+  is no child to a selector that counts children, `:first-child` or `:empty`. Any other
+  pseudo-element is dropped with a warning, as in an app's own sheet.
+
+- `visibility: hidden` (and `collapse`) draws the box with no opacity and takes no touch, and the
+  box keeps its room. `visible` from a later rule shows it again. Unlike in a browser, a hidden box
+  hides all that is in it: a box inside it with `visibility: visible` is not seen either, as the
+  opacity of a view is the opacity of everything in it.
+- `clip: rect()` with nothing in it, and `clip-path: inset(50%)`, draw nothing of the box over
+  any rule that draws it - no background, shadow, border, outline or minimum size - and leave it
+  there for a screen reader. Any other clip is dropped with a warning, as everywhere.
+- `overflow-x` or `overflow-y` of `hidden` or `clip` clips both axes, since a view clips on both or
+  on neither. `overflow-y: auto` or `scroll` is `overflow: scroll`, which also clips both axes: the
+  box scrolls only where the element is a `<scroll-view>`, and a plain view does not. Any other
+  value on one axis is no clip.
+- `:checked` and `:indeterminate` match an element whose prop of that name is set, and `:enabled`
+  one with no `disabled` prop.
 
 ## What has nothing to map onto
 

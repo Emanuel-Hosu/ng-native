@@ -386,6 +386,11 @@ export interface DeferredDeclaration {
     readonly offset?: number;
     readonly floor?: number;
     /**
+     * A percentage the length is added to, `calc(100% - var(--x))`: written as that sum, which
+     * the engine works out once the box the percentage is of has been laid out.
+     */
+    readonly percent?: number;
+    /**
      * The reference is multiplied by a length, so it is a number: `calc(var(--n) * 1px)`. Without
      * this it is a length, and a number token is no such thing, as CSS types a calc().
      */
@@ -6045,6 +6050,25 @@ function colourMarker(value: unknown): ColourExpression | undefined {
 }
 
 /**
+ * A token added to a percentage, `calc(100% - var(--handle))`: a length in points or a share of
+ * the same box adds up to one value. A length of the box's own font does not, here, so the box is
+ * given none rather than one that is not what the rule says.
+ */
+function withPercent(value: unknown, adjust: NonNullable<DeferredDeclaration['adjust']>): unknown {
+  const percent = adjust.percent!;
+  if (typeof value === 'string' && value.endsWith('%')) {
+    const share = percent + Number.parseFloat(value) * (adjust.scale ?? 1);
+    const offset = adjust.offset ?? 0;
+    return offset === 0 ? `${share}%` : `calc(${share}% + ${offset}px)`;
+  }
+  // A length of its own font, deferred, is no number here.
+  if (typeof value !== 'number') return undefined;
+  const scaled = value * (adjust.scale ?? 1) + (adjust.offset ?? 0);
+  // With nothing to add, the percentage alone, which needs no second pass.
+  return scaled === 0 ? `${percent}%` : `calc(${percent}% + ${scaled}px)`;
+}
+
+/**
  * A resolved length, moved by the arithmetic that surrounded its `var()`.
  *
  * A non-numeric value is left alone rather than coerced: the token was a keyword or a percentage
@@ -6053,6 +6077,7 @@ function colourMarker(value: unknown): ColourExpression | undefined {
 function adjusted(value: unknown, adjust: NonNullable<DeferredDeclaration['adjust']>): unknown {
   if (adjust.alpha !== undefined) return faded(value, adjust.alpha);
   const em = (value as { __defer?: DeferredEm } | null)?.__defer;
+  if (adjust.percent !== undefined) return withPercent(value, adjust);
   if (em && adjust.floor === undefined) return adjustedEm(em, adjust);
   if (typeof value !== 'number') return value;
   const scaled = value * (adjust.scale ?? 1) + (adjust.offset ?? 0);
