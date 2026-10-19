@@ -28,6 +28,7 @@ const {
   withRefusals,
   mixedToken,
   OF_A_BOX,
+  color,
 } = require('./values.cjs');
 const {
   translate,
@@ -2771,6 +2772,65 @@ function undrawn(name, context) {
   );
 }
 
+/** A shape's lengths, which react-native-svg takes as numbers or percentages under these names. */
+const SHAPE_LENGTHS = {
+  'stroke-width': 'strokeWidth',
+  'stroke-dashoffset': 'strokeDashoffset',
+};
+const PAINTS = new Set(['fill', 'stroke']);
+
+/**
+ * A declaration that paints an SVG shape, as the props a native shape is drawn with: for a sheet
+ * compiled with `generated`, read as a browser reads a library's, whose `<svg>` is drawn
+ * natively. Answers whether the declaration was one. A paint is kept as written, `none` and
+ * `currentColor` included, for the engine to make the brush of.
+ */
+function shapePaint(declaration, out, deferred, context) {
+  if (declaration.property === 'unparsed') {
+    const name = declaration.value?.propertyId?.property;
+    if (SHAPE_LENGTHS[name]) {
+      // As a length is read, with its fallbacks, and written to the shape's own prop.
+      const read = deferVar({ ...declaration.value, propertyId: { property: 'width' } }, context);
+      deferred.push({ ...read, props: [SHAPE_LENGTHS[name]] });
+      return true;
+    }
+    if (!PAINTS.has(name)) return false;
+    // As a colour is read, with its fallbacks, and written to the paint it is for.
+    const read = deferVar({ ...declaration.value, propertyId: { property: 'color' } }, context);
+    deferred.push({ ...read, props: [name] });
+    return true;
+  }
+  const { property: name, value } = declaration;
+  if (PAINTS.has(name)) {
+    out[name] = value.type === 'none' ? 'none' : paintOf(value.value, context);
+    return true;
+  }
+  if (SHAPE_LENGTHS[name]) {
+    strokeLength(SHAPE_LENGTHS[name], length(value, context), out, deferred);
+    return true;
+  }
+  if (name !== 'stroke-dasharray') return false;
+  // `none` is a dash the shape names as its own and sets to nothing, which react-native-svg
+  // draws solid over a dash it would otherwise take from the group it is in.
+  const dashes = value.type === 'none' ? null : value.value.map((dash) => length(dash, context));
+  strokeLength('strokeDasharray', dashes, out, deferred);
+  return true;
+}
+
+/**
+ * A shape's length as `length` reads it: points, a percentage string, or an `em` left for the
+ * device to settle against the shape's font, as a length of a box is.
+ */
+function strokeLength(prop, value, out, deferred) {
+  delete out[prop];
+  if (value?.__defer) deferred.push({ props: [prop], compute: value.__defer });
+  else if (holdsMarker(value)) deferred.push({ props: [prop], within: value });
+  else out[prop] = value;
+}
+
+const paintOf = (colour, context) =>
+  colour.type === 'currentcolor' ? 'currentColor' : color(colour, context);
+
 /**
  * @param source CSS text.
  * @param context Name used in messages, normally the file and component.
@@ -2787,7 +2847,8 @@ function undrawn(name, context) {
  *   `generated` reads the sheet as the browser it was written for reads it, for components made
  *   for one: `::before` and `::after` as boxes of their own with the `content` they are given,
  *   `visibility`, a clip to nothing, `overflow` along one axis and a control's state, which an
- *   app's own sheet is told to write another way.
+ *   app's own sheet is told to write another way. An SVG shape's `fill`, `stroke` and stroke lengths
+ *   are kept for a drawing of it, where another sheet is refused them.
  */
 function compileCss(source, context = 'styles', options = {}) {
   const rules = [];
@@ -2869,23 +2930,55 @@ function compileCss(source, context = 'styles', options = {}) {
     }
   }
 
-  /** A generated box's `content`, or `none` and the report of why where it is one no box draws. */
   /**
    * A declaration only a sheet read as a browser reads it has a meaning for: a generated box's
-   * `content`, reported where it is one no box draws, or what `asABrowserReads` takes.
+   * `content`, reported where it is one no box draws, an SVG shape's paint, or what
+   * `asABrowserReads` takes. Answers whether it was one.
    */
-  function readBrowsers(declaration, out, context) {
+  function readAsABrowser(declaration, out, deferred, context) {
+    if (shapePaint(declaration, out, deferred, context)) return true;
     if (!isContent(declaration)) return asABrowserReads(declaration, out);
     declareContent(declaration, out, context);
     return true;
   }
 
+  /** A generated box's `content`, or `none` and the report of why where it is one no box draws. */
   function declareContent(declaration, out, context) {
     const content = contentOf(declaration);
     out.content = content ?? 'none';
     if (content !== null) return;
     const why = 'a generated box draws one string, so it draws none for this';
     onUnsupported?.(reported(context, "dropped 'content'", why));
+  }
+
+  /**
+   * A declaration a sheet read as a browser reads it has a meaning for, read as `declare` reads
+   * any: a value refused costs only that declaration, reported, and what it writes replaces what
+   * an earlier one left to settle on device. Answers whether it was one.
+   */
+  function readBrowsers(declaration, out, deferred, context) {
+    const before = deferred.length;
+    const written = new Set();
+    const tracked = new Proxy(out, {
+      set(target, key, value) {
+        written.add(key);
+        target[key] = value;
+        return true;
+      },
+    });
+    try {
+      if (!readAsABrowser(declaration, tracked, deferred, context)) return false;
+      supersede(deferred, before, written);
+    } catch (error) {
+      if (!onUnsupported || !(error instanceof CssUnsupported)) throw error;
+      // A declaration with a token in it is `unparsed`, named by the property it is for.
+      const name =
+        declaration.property === 'unparsed'
+          ? declaration.value?.propertyId?.property
+          : declaration.property;
+      onUnsupported(reported(context, `dropped '${name}'`, error.message));
+    }
+    return true;
   }
 
   /**
@@ -3174,7 +3267,7 @@ function compileCss(source, context = 'styles', options = {}) {
       for (const stated of list ?? []) {
         const declaration = ownToken(stated, raw);
         if (declaration === null) continue;
-        if (options.generated && readBrowsers(declaration, out, context)) continue;
+        if (options.generated && readBrowsers(declaration, out, deferred, context)) continue;
         if (easedByToken(declaration, out, deferred, context)) continue;
         if (timedByToken(declaration, out, context)) continue;
         const before = deferred.length;
