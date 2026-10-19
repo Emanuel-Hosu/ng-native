@@ -569,7 +569,12 @@ export interface EngineNode extends HostNode {
    * `setInline`. Unset on every other node.
    */
   inlineLevel?: 'always' | 'unless-block';
+  /** Set by `scrollsOverflow`: with `overflow: auto` or `scroll` this element is a scroll view. */
+  scrollsOverflow?: true;
+  /** Set while this element is one: see `Engine.settleScrolling`. */
   scrollView?: true;
+  /** The view a scrolling element's children are in, as it was last committed. */
+  inside?: { handle: FabricNode; childHandles: FabricNode[] };
   /** Set while `settleLine` has given an always-inline element a line for the boxes it holds. */
   lined?: true;
   /** Set while an always-inline element is a flex box or a grid by its own style. */
@@ -840,6 +845,64 @@ export function claimHost(node: HostNode): void {
 }
 
 /**
+ * Say that an element scrolls what overflows it, as a browser's does: with `overflow: auto` or
+ * `scroll` it is committed as a scroll view, around one view that holds what it holds. For a
+ * package that gives elements a browser's behaviour. Any other element keeps the view it is,
+ * and its `overflow` is layout alone.
+ */
+export function scrollsOverflow(node: EngineNode): void {
+  node.scrollsOverflow = true;
+}
+
+/** What a scrolling element lays out what it holds by, which its content view takes. */
+const CONTENT_KEYS = new Set([
+  ...['padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft'],
+  ...['paddingHorizontal', 'paddingVertical', 'paddingStart', 'paddingEnd'],
+  ...['paddingInline', 'paddingBlock', 'paddingInlineStart', 'paddingInlineEnd'],
+  ...['paddingBlockStart', 'paddingBlockEnd'],
+  ...['flexDirection', 'flexWrap', 'alignItems', 'alignContent', 'justifyContent'],
+  ...['gap', 'rowGap', 'columnGap'],
+]);
+
+/** A scrolling element's props split between its two views: see `scrollerProps`. */
+function splitScroller(props: Record<string, unknown>): {
+  box: Record<string, unknown>;
+  content: Record<string, unknown>;
+} {
+  const box: Record<string, unknown> = {};
+  const content: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(props)) {
+    (CONTENT_KEYS.has(key) ? content : box)[key] = value;
+  }
+  // A scroll view clips only as `scroll`: native reads `auto`, which an inline style can say, as
+  // visible.
+  if (box['overflow'] === 'auto') box['overflow'] = 'scroll';
+  return { box, content };
+}
+
+/**
+ * A scrolling element's props as its two views take them: the box it is, on the scroll view,
+ * and how it lays out what it holds, on the content. The content is a view of its own whatever
+ * is in it: a scroll view scrolls one child.
+ */
+function scrollerProps(props: Record<string, unknown>): {
+  box: Record<string, unknown>;
+  content: Record<string, unknown>;
+} {
+  const { box, content } = splitScroller(props);
+  // Nested: on Android a scroll view inside another is passed over for the outer one unless it
+  // asks, and a web element that scrolls is as often as not inside a page that does.
+  return {
+    box: { nestedScrollEnabled: true, ...box },
+    content: { collapsable: false, ...content },
+  };
+}
+
+/** The props of a payload, or null where there are none. */
+const someProps = (props: Record<string, unknown>): Record<string, unknown> | null =>
+  Object.keys(props).length ? props : null;
+
+/**
  * Mark an element as the host of a component. The platform adapter calls this from
  * `RendererFactory2.createRenderer`, which Angular calls once for every component it mounts,
  * with the host element in hand, whatever the component's selector.
@@ -933,6 +996,13 @@ const DEFAULT_PROPS: Record<string, Record<string, unknown>> = {
   // rather than a prop the component writes, so `text-overflow` in a stylesheet can change it.
   Paragraph: { ellipsizeMode: 'tail' },
 };
+
+/**
+ * What an element that scrolls its overflow has of a scroll view's defaults: it clips, and lays
+ * out in a column. Not the grow and shrink of `ScrollView.js`, which a CSS box has none of: an
+ * element with `overflow: auto` and a height is as tall as it says, not as the room it is in.
+ */
+const OVERFLOW_SCROLLER = { flexDirection: 'column', overflow: 'scroll' };
 
 const RAW_TEXT = 'RawText';
 /**
@@ -4711,11 +4781,27 @@ const oneRun = (child: EngineNode): boolean =>
  * into or out of one is too (see `reconcileUnder`), so the name cannot go stale on a clone.
  */
 function committedViewName(node: EngineNode): string {
+  if (node.scrollView) return registeredViewName('scroll-view') ?? 'ScrollView';
   if (aligningText(node)) return DEFAULT_VIEW;
   const name = viewNameOf(node);
   return name === DEFAULT_VIEW && platformOS === 'android' && holdsContentOf(node.parent)
     ? HORIZONTAL_CONTENT
     : name;
+}
+
+/**
+ * The nearest scroll view a node is in that scrolls up and down: a sideways carousel on a page
+ * is not what moves a field clear of the bottom of the screen.
+ */
+function scrollingDown(node: EngineNode): EngineNode | null {
+  let scroll = node.parent;
+  while (
+    scroll &&
+    !(SCROLL_VIEWS.has(committedViewName(scroll)) && scroll.props['horizontal'] !== true)
+  ) {
+    scroll = scroll.parent;
+  }
+  return scroll;
 }
 
 /** Whether a node is a horizontal scroll view, whose children hold its content. */
@@ -5415,6 +5501,8 @@ const ENGINE_NODE_FIELDS = {
   propsDirty: true,
   structureDirty: true,
   subtreeDirty: true,
+  inside: true,
+  scrollsOverflow: true,
   engine: true,
 } satisfies Record<keyof EngineNode, true>;
 
@@ -6463,20 +6551,12 @@ export class Engine implements HostEngine {
    * far its content's top edge is above its own.
    */
   reveal(node: EngineNode, options: { visibleBottom?: number; margin?: number } = {}): void {
-    // The nearest scroll view that scrolls up and down: a sideways carousel on a page is not
-    // what moves a field clear of the bottom of the screen.
-    let scroll = node.parent;
-    while (
-      scroll &&
-      !(SCROLL_VIEWS.has(viewNameOf(scroll)) && scroll.props['horizontal'] !== true)
-    ) {
-      scroll = scroll.parent;
-    }
-    const content = scroll && this.visibleChildren(scroll)[0];
+    const scroll = scrollingDown(node);
+    const content = scroll && this.contentOf(scroll);
     if (!scroll || !content) return;
     const margin = options.margin ?? 16;
     this.measure(scroll, (view) => {
-      this.measure(content, (inner) => {
+      this.measureHandle(content, (inner) => {
         this.measure(node, (target) => {
           const offset = view.y - inner.y;
           const top = view.y + margin;
@@ -6489,6 +6569,14 @@ export class Engine implements HostEngine {
         });
       });
     });
+  }
+
+  /**
+   * The view a scroll view's content is in: an element that scrolls its overflow holds its
+   * children in one of its own, and any other scroll view's first child is it.
+   */
+  private contentOf(scroll: EngineNode): FabricNode | undefined {
+    return scroll.inside?.handle ?? this.visibleChildren(scroll)[0]?.committed?.handle;
   }
 
   /**
@@ -10344,7 +10432,8 @@ export class Engine implements HostEngine {
     if (this.dev) this.checkProps(node);
     this.registerSheet(node.templateSheet);
     this.registerSheet(node.hostSheet);
-    const props: Record<string, unknown> = { ...DEFAULT_PROPS[viewName], ...node.defaultStyle };
+    const defaults = node.scrollView ? OVERFLOW_SCROLLER : DEFAULT_PROPS[viewName];
+    const props: Record<string, unknown> = { ...defaults, ...node.defaultStyle };
     Object.assign(props, this.ruleStyle(node));
     const resolved = props['pointerEvents'];
     writeOwnProps(node.props, props, node.attributeOnly);
@@ -12346,6 +12435,7 @@ export class Engine implements HostEngine {
     this.refitChildren(node);
     if (this.asked & LAYOUTS) this.relayout(node);
 
+    if (node.scrollsOverflow) this.settleScrolling(node);
     const viewName = committedViewName(node);
     this.forgetRenamed(node, viewName);
     this.noteBaselineFields(node);
@@ -12354,6 +12444,7 @@ export class Engine implements HostEngine {
     if (this.fixedIn.size) this.fixedHandles(node, childHandles);
     this.raise(node, viewName);
     noteTouches(node, style);
+    if (node.scrollView) return this.reconcileScroller(node, viewName, childHandles, styleChanged);
     const previous = node.committed;
     this.notePresented(node, viewName);
     if (!previous)
@@ -12434,6 +12525,82 @@ export class Engine implements HostEngine {
       node.committed = { handle, tag: previous.tag, props, childHandles, viewName };
     }
     this.clearFlags(node);
+    return handle;
+  }
+
+  /** Whether an element said to scroll its overflow is to: its style says `auto` or `scroll`. */
+  private settleScrolling(node: EngineNode): void {
+    // A sheet's `auto` is compiled to `scroll`; an inline style's is not.
+    const overflow = readStyle(node, 'overflow');
+    if (overflow === 'scroll' || overflow === 'auto') node.scrollView = true;
+    else node.scrollView = undefined;
+  }
+
+  /**
+   * `reconcile` for an element that scrolls its overflow: a scroll view, and in it the one view
+   * its children are in. Each is created once and cloned for what changed of its own: the
+   * content for the children and for how they are laid out, the scroll view for its box and
+   * for a content that was cloned.
+   */
+  private reconcileScroller(
+    node: EngineNode,
+    viewName: string,
+    childHandles: FabricNode[],
+    styleChanged: boolean,
+  ): FabricNode {
+    const previous = node.committed;
+    const held = node.inside;
+    if (!previous || !held) return this.createScroller(node, viewName, childHandles);
+    const propsMoved = node.propsDirty || styleChanged;
+    const props = propsMoved ? this.mergeProps(node, viewName) : previous.props;
+    const payload = propsMoved ? this.propsPayload(node, previous.props, props) : null;
+    if (this.asked & LAYOUTS) this.noteHow(node, payload);
+    const moved = this.childrenMoved(node, childHandles, held.childHandles);
+    const { box, content } = splitScroller(payload ?? {});
+    // All of it: the content's padding moves what it holds, and can resize the element.
+    if (this.notesMoves) this.noteClone(node, payload, moved, childHandles, previous);
+    const inside = this.clonedFor(held.handle, someProps(content), moved ? childHandles : null);
+    const handle = this.clonedFor(
+      previous.handle,
+      someProps(box),
+      inside === held.handle ? null : [inside],
+    );
+    node.committed = { handle, tag: previous.tag, props, childHandles, viewName };
+    node.inside = { handle: inside, childHandles };
+    this.clearFlags(node);
+    return handle;
+  }
+
+  /** A view cloned for the props and the children that changed, or itself where neither did. */
+  private clonedFor(
+    handle: FabricNode,
+    props: Record<string, unknown> | null,
+    children: FabricNode[] | null,
+  ): FabricNode {
+    if (!props && !children) return handle;
+    return this.clone(handle, props && this.processed(props, true), children);
+  }
+
+  private createScroller(
+    node: EngineNode,
+    viewName: string,
+    childHandles: FabricNode[],
+  ): FabricNode {
+    const props = this.mergeProps(node, viewName);
+    const { box, content } = scrollerProps(props);
+    // The element is what a touch on its content lands on.
+    const inside = this.fabric.createNode(
+      nextTag(),
+      DEFAULT_VIEW,
+      this.rootTag,
+      this.processed(content, false),
+      node,
+    );
+    this.stats.createdNodes++;
+    for (const child of childHandles) this.fabric.appendChild(inside, child);
+    const handle = this.create(node, viewName, box, [inside]);
+    node.committed = { ...node.committed!, props, childHandles };
+    node.inside = { handle: inside, childHandles };
     return handle;
   }
 
@@ -13012,6 +13179,8 @@ export class Engine implements HostEngine {
     if (node.owned) this.disown(node);
     node.styleCommitted = null;
     node.kept = undefined;
+    // Its content view goes with the scroll view: made again, the two are made together.
+    node.inside = undefined;
     // A scroll-driven animation is bound to native views by their tags: its own, and its scroll
     // view's. Made again, each has another, so what drives it starts again with the new ones.
     if (node.scrolled?.drive) this.stopScrolled(node);
@@ -13441,8 +13610,12 @@ export class Engine implements HostEngine {
    */
   measure(node: EngineNode, into: (frame: WindowFrame) => void): void {
     const handle = node.committed?.handle;
-    if (!handle || !this.fabric.measureInWindow) return;
-    this.fabric.measureInWindow(handle, (x, y, width, height) => into({ x, y, width, height }));
+    if (handle) this.measureHandle(handle, into);
+  }
+
+  /** `measure` for a committed view by its handle, which a node's own may not be. */
+  private measureHandle(handle: FabricNode, into: (frame: WindowFrame) => void): void {
+    this.fabric.measureInWindow?.(handle, (x, y, width, height) => into({ x, y, width, height }));
   }
 
   /**
@@ -13769,7 +13942,7 @@ export class Engine implements HostEngine {
    */
   private holdScroll(node: EngineNode): void {
     for (let up = node.parent; up; up = up.parent) {
-      if (up.nodeKind !== 'element' || !SCROLL_VIEWS.has(viewNameOf(up))) continue;
+      if (up.nodeKind !== 'element' || !SCROLL_VIEWS.has(committedViewName(up))) continue;
       this.scrollHeld = up;
       this.tellScreen(up);
       return;
