@@ -1410,6 +1410,10 @@ function unpinned<T>(
  * component's override, inline, a prop, its stylesheet, its default.
  */
 function ownLayout(node: EngineNode, key: string): unknown {
+  // With no rule marked `!important` on the node, its inline style stands whole, and `readStyle`
+  // answers the same without flattening a style into a new object: this is asked of every child
+  // a commit reconciles.
+  if (node.styleCache?.important === undefined) return readStyle(node, key);
   return (
     flattenStyle(node.props[STYLE_OVERRIDE], {})[key] ??
     inlineOf(node)[key] ??
@@ -2876,6 +2880,18 @@ function unaskedPlan(node: EngineNode): string[] {
 const askMode = (): 'all' | 'check' | undefined =>
   (globalThis as { ɵngNativeLayoutAsks?: 'all' | 'check' }).ɵngNativeLayoutAsks;
 
+/** Whether a key is a transition's or an animation's, as each of their declarations is kept. */
+const easesBy = (key: string): boolean =>
+  key.charCodeAt(0) === 36 && (key.startsWith('$transition') || key.startsWith('$animation'));
+
+/** Whether a style, an object or a list of them, transitions or animates. Allocates nothing. */
+function styleEases(style: unknown): boolean {
+  if (!style || typeof style !== 'object') return false;
+  if (Array.isArray(style)) return style.some(styleEases);
+  for (const key in style) if (easesBy(key)) return true;
+  return false;
+}
+
 /** What the declarations of a style ask for, together. */
 function styleAsks(style: unknown): number {
   if (style === null || typeof style !== 'object') return 0;
@@ -2884,7 +2900,12 @@ function styleAsks(style: unknown): number {
     for (const each of style) asked |= styleAsks(each);
     return asked;
   }
-  for (const key in style) asked |= asks(key, (style as Record<string, unknown>)[key]);
+  for (const key in style) {
+    const value = (style as Record<string, unknown>)[key];
+    // A number asks for nothing but by a key the engine alone reads, as in `Engine.setProp`: told
+    // here without the call, as most declarations are numbers.
+    if (typeof value !== 'number' || LAID_OUT_HERE.has(key)) asked |= asks(key, value);
+  }
   return asked;
 }
 
@@ -3813,9 +3834,15 @@ function readStyle(node: EngineNode, key: string): unknown {
   // Asked of most nodes more than once a commit, and most have neither of the first two.
   const over = props[STYLE_OVERRIDE];
   const inline = props['style'];
+  // A style object, the usual inline style, is read here rather than through `styleKey`.
+  const plain = inline !== null && typeof inline === 'object' && !Array.isArray(inline);
   return (
     (over === undefined ? undefined : styleKey(over, key)) ??
-    (inline === undefined ? undefined : styleKey(inline, key)) ??
+    (inline === undefined
+      ? undefined
+      : plain
+        ? (inline as Record<string, unknown>)[key]
+        : styleKey(inline, key)) ??
     props[key] ??
     node.styleCache?.style[key] ??
     node.defaultStyle?.[key]
@@ -4972,7 +4999,11 @@ const holdsContentOf = (parent: EngineNode | null): boolean =>
  * Exported for tools that show a template beside what it becomes, such as the X-ray in the
  * documentation's course, which labels `@ng-native/web`'s DOM with these names. It reads the same
  * table the commit does, so after `registerPlatformComponents('android')` it answers for Android.
+ *
+ * Exempt from the complexity limit as `mergeProps` is: asked of every element several times a
+ * commit, where a call more for the name of a plain view measured slower in `pnpm bench`.
  */
+// eslint-disable-next-line complexity
 export function viewNameOf(node: ViewNameNode): string {
   if (node.nodeKind === 'text') return RAW_TEXT;
   // RN models nested text as a span inside a paragraph: `Paragraph > [RawText, Text > RawText]`.
@@ -4981,8 +5012,11 @@ export function viewNameOf(node: ViewNameNode): string {
   // A component of the app's own under a name a view set registered: its host is a plain view.
   if (node.componentHost && !node.nativeView && YIELDING.has(node.tag)) return DEFAULT_VIEW;
   const registered = registeredViewName(node.tag);
-  // Nearly every element: a view of some kind, by its name alone.
-  if (registered !== PARAGRAPH) return namedView(node, registered);
+  // Nearly every element: a view of some kind, by its name alone. A scroll view, the one name
+  // that can mean two views, is told from the rest first.
+  if (registered !== PARAGRAPH) {
+    return registered === 'ScrollView' ? namedView(node, registered) : (registered ?? DEFAULT_VIEW);
+  }
   // One of HTML's text elements that holds something other than text: a view.
   // Or one that lays out what it holds itself: see `Engine.settleBoxed`.
   if (node.tag !== 'text' && TEXT_ELEMENTS.has(node.tag) && !holdsOnlyText(node)) {
@@ -5363,14 +5397,13 @@ const BOUND_TOKEN =
  * A bound value kept as a declaration the cascade settles: a `var()`, a colour made of tokens, or
  * a relative length.
  */
-/** The text each bound declaration was read from, to know one bound again as it was. */
+/**
+ * The text each bound declaration was read from, to know one bound again as it was: see
+ * `Engine.setBoundStyle`.
+ */
 const BOUND_TEXT = new WeakMap<DeferredDeclaration, string>();
 
-/** Bound again as it is: a chart writes each of its points' paints again as a finger moves. */
-const boundAsIs = (had: DeferredDeclaration | undefined, text: string | undefined): boolean =>
-  had !== undefined && text !== undefined && BOUND_TEXT.get(had) === text;
-
-/** `boundFrom`, remembering the text it was read from: see `boundAsIs`. */
+/** `boundFrom`, remembering the text it was read from. */
 function boundRead(prop: string, text: string, on: string): DeferredDeclaration | null {
   const bound = boundFrom(prop, text, on);
   if (bound) BOUND_TEXT.set(bound, text);
@@ -5445,6 +5478,11 @@ class RetainedNode {
   styled: true | undefined = undefined;
   bornIn: number | undefined = undefined;
   truncates: true | undefined = undefined;
+  // Written on nodes that never had one: a style set inline, and every node a commit forgets. A
+  // field a node is not made with gives it another shape when it is written.
+  inlineInherits: boolean | undefined = undefined;
+  line: LineBox | undefined = undefined;
+  inside: { handle: FabricNode; childHandles: FabricNode[] } | undefined = undefined;
   transitions?: Map<string, Transition>;
   playing?: RunningAnimation;
   scrolled?: ScrollAnimation;
@@ -6444,6 +6482,12 @@ export class Engine implements HostEngine {
    * for them. Only those in the tree: see `releaseDetached`.
    */
   private readonly hoisted = new Set<EngineNode>();
+
+  /**
+   * Whether a subtree that left the tree has ever held a hoisted node of its own: until one has,
+   * a node taken out has none to carry, and `carryHoists` does not walk up to look.
+   */
+  private hoistsHeld = false;
   /** The nodes taken out of a child list since the last commit. See `releaseDetached`. */
   private readonly removedSinceCommit = new Set<EngineNode>();
   /**
@@ -6966,11 +7010,14 @@ export class Engine implements HostEngine {
       if (html.role) node.props['accessibilityRole'] = html.role;
       node.styled = html.styled;
     }
-    this.watchStructure(sheet);
-    this.watchLayout(sheet);
-    this.watchHas(sheet);
-    this.watchActive(sheet);
-    this.watchGenerated(sheet);
+    // Each watch is of a sheet, and most elements are made with none: told here, not five calls in.
+    if (sheet !== null) {
+      this.watchStructure(sheet);
+      this.watchLayout(sheet);
+      this.watchHas(sheet);
+      this.watchActive(sheet);
+      this.watchGenerated(sheet);
+    }
     if (HOISTS[name]) this.hoisted.add(node);
     if (this.generated !== null) this.generate(node);
     return node;
@@ -7341,6 +7388,7 @@ export class Engine implements HostEngine {
    * release, puts each back with the subtree it is in.
    */
   private carryHoists(child: EngineNode): void {
+    if (!this.hoistsHeld) return;
     const top = this.topOf(child);
     if (top.dormantHoists) this.wakeHoists(top);
   }
@@ -7400,6 +7448,7 @@ export class Engine implements HostEngine {
       if (top === this.root) continue;
       this.hoisted.delete(node);
       (top.dormantHoists ??= []).push(node);
+      this.hoistsHeld = true;
     }
     for (const node of this.playing) {
       if (this.topOf(node) === this.root) continue;
@@ -7483,6 +7532,7 @@ export class Engine implements HostEngine {
     if (top !== this.root) {
       this.hoisted.delete(node);
       (top.dormantHoists ??= []).push(node);
+      this.hoistsHeld = true;
     }
     node.kept = undefined;
     // A field popped with the keyboard up never sends its blur.
@@ -7530,10 +7580,14 @@ export class Engine implements HostEngine {
     }
   }
 
-  /** Note a prop, or a style set as one, that transitions or animates: see `eases`. */
+  /**
+   * Note a prop, or a style set as one, that transitions or animates: see `eases`. Asked of every
+   * prop and declaration set until one does, so it reads the keys where they are, copying none.
+   */
   private noteEasingProp(key: string, value: unknown): void {
-    this.noteEasing({ [key]: value });
-    if (key === 'style' || key === STYLE_OVERRIDE) this.noteEasing(flattenStyle(value, {}));
+    if (easesBy(key) || ((key === 'style' || key === STYLE_OVERRIDE) && styleEases(value))) {
+      this.eases = true;
+    }
   }
 
   /**
@@ -7557,8 +7611,12 @@ export class Engine implements HostEngine {
       if (node.props[key] === value) return;
       node.props[key] = value;
       // A number asks for nothing but by a key the engine alone reads: see `asks`.
-      const asks = typeof value !== 'number' || LAID_OUT_HERE.has(key);
-      if (asks && this.asked !== EVERYTHING) this.askedBy(key, value);
+      // `askedBy`, written out: this runs for every prop Angular writes.
+      if ((typeof value !== 'number' || LAID_OUT_HERE.has(key)) && this.asked !== EVERYTHING) {
+        const bits =
+          key === 'style' || key === STYLE_OVERRIDE ? styleAsks(value) : asks(key, value);
+        if (bits & ~this.asked) this.want(bits);
+      }
     }
     // Inline style is applied after the cascade and inherited by nothing, so it cannot change
     // what any node matches or inherits. Every other prop can: `[disabled]` is a selector. An
@@ -7690,7 +7748,11 @@ export class Engine implements HostEngine {
    * has changed for the props diff to notice.
    */
   styleChanged(node: EngineNode, key?: string): void {
-    if (!this.eases) this.noteEasingProp('style', node.props['style']);
+    // The rest of the style was noted as it was set: only the declaration changed can be new.
+    if (!this.eases) {
+      if (key === undefined) this.noteEasingProp('style', node.props['style']);
+      else if (easesBy(key)) this.eases = true;
+    }
     if (this.asked !== EVERYTHING) {
       const style = node.props['style'] as Record<string, unknown> | undefined;
       const value = key === undefined ? style : style?.[key];
@@ -7713,7 +7775,9 @@ export class Engine implements HostEngine {
   setBoundStyle(node: EngineNode, prop: string, value: unknown): boolean {
     const text = typeof value === 'string' ? value : undefined;
     const had = node.boundByProp?.get(prop);
-    if (boundAsIs(had, text)) return true;
+    // Bound again as it is: a chart writes each of its points' paints again as a finger moves.
+    // Asked here, without a call, as this runs for every declaration of every inline style.
+    if (had !== undefined && text !== undefined && BOUND_TEXT.get(had) === text) return true;
     const refused = text !== undefined && this.refusedBound(node, prop, text);
     const bound = text === undefined || refused ? null : boundRead(prop, text, node.tag);
     if (bound || had) this.keepBound(node, prop, bound);
@@ -10772,34 +10836,29 @@ export class Engine implements HostEngine {
   }
 
   /**
-   * What an element sets itself, inline or bound from a token, over the cascade's other forms of
-   * it: the logical or physical side (`overOtherForms`) and the sides a shorthand covers
-   * (`underOwnShorthands`).
-   */
-  private ownOverCascade(
-    node: EngineNode,
-    inline: Readonly<Record<string, unknown>>,
-    style: Record<string, unknown>,
-  ): void {
-    if (inline !== NO_STYLE) this.styles.overOtherForms(inline, style);
-    if (inline === NO_STYLE && !node.boundByProp?.size) return;
-    underOwnShorthands(style, inline, node.boundByProp, node.styleCache?.important);
-  }
-
-  /**
    * Exempt from the complexity limit deliberately, as `matchesCompound` is: a flat sequence of
    * steps, each guarded by what it reads, run for every node merged. Moving the guards into calls
    * of their own measured slower in `pnpm bench` and `pnpm bench:tailwind`.
    */
   // eslint-disable-next-line complexity
   private mergeProps(node: EngineNode, viewName: string): Record<string, unknown> {
-    if (node.nodeKind === 'text') return this.textProps(node);
+    if (node.nodeKind === 'text') {
+      // Asked first, without a call: no grid's words are being read in nearly every commit.
+      if (this.wordsOf === null && this.narrowed === null) return { text: paragraphText(node) };
+      return this.textProps(node);
+    }
     if (this.dev) this.checkProps(node);
     this.registerSheet(node.templateSheet);
     this.registerSheet(node.hostSheet);
     const defaults = node.scrollView ? OVERFLOW_SCROLLER : DEFAULT_PROPS[viewName];
     const props: Record<string, unknown> = { ...defaults, ...node.defaultStyle };
-    Object.assign(props, this.ruleStyle(node));
+    // A generated box's style is told from the rest only once a sheet gives one: see `ruleStyle`.
+    Object.assign(
+      props,
+      this.generated === null
+        ? this.styles.resolve(node, this.styleEpoch).style
+        : this.ruleStyle(node),
+    );
     const resolved = props['pointerEvents'];
     writeOwnProps(node.props, props, node.attributeOnly);
     withTextContent(node, viewName, props);
@@ -10807,12 +10866,21 @@ export class Engine implements HostEngine {
     const cascaded = props['transform'];
     const inline = inlineOf(node);
     const style = boundTransform(node, Object.assign(props, inline), cascaded);
-    this.ownOverCascade(node, inline, style);
+    // What an element sets itself, inline or bound from a token, over the cascade's other forms of
+    // it: the logical or physical side (`overOtherForms`) and the sides a shorthand covers
+    // (`underOwnShorthands`). Asked here, not in a method of its own: it is asked of every node.
+    if (inline !== NO_STYLE) this.styles.overOtherForms(inline, style);
+    if (inline !== NO_STYLE || node.boundByProp?.size) {
+      underOwnShorthands(style, inline, node.boundByProp, node.styleCache?.important);
+    }
     nativePointerEvents(node, style, resolved);
     // Before an image's own size: `fit-content` is no size, so the image's is what it gets.
     fitContent(node, style);
     if (this.asked & SHARED_HEIGHTS) this.noteShare(node, style);
-    percentHeight(node, style);
+    // Each asked of the key it reads first: it is asked of every node merged.
+    if (style['height'] !== undefined || style['minHeight'] !== undefined) {
+      percentHeight(node, style);
+    }
     if (style['rowGap'] !== undefined) percentGap(node, style);
     if (this.asked & CSS_LAYOUT) this.flowed(node, style);
     placeholderFaded(style);
@@ -10823,7 +10891,12 @@ export class Engine implements HostEngine {
     holdLoadingFamily(node, style);
     // Once the face is matched: a family a view's own font names is the face its weight chose.
     renameFonts(viewName, style, this.postScriptName);
-    if (viewName === PARAGRAPH) this.paragraphStyled(node, style);
+    // What a paragraph alone is styled with: how its text is aligned, cut off and held tall.
+    if (viewName === PARAGRAPH) {
+      alignText(style, this.directionOf(node, style));
+      this.wholeWords(node, style);
+      lineTall(style, this.tallestRun(node, style, 0), this.fontScale);
+    }
     if (this.fontsRefreshed) this.capForFonts(node, style);
     const field = TEXT_INPUTS.has(viewName);
     if (field) fieldStyled(viewName, style, this.fontScale);
@@ -10855,15 +10928,15 @@ export class Engine implements HostEngine {
     }
     if (node.raised !== undefined) merged['zIndex'] ??= node.raised;
     keptForNative(node, merged);
-    this.laidOut(node, merged);
+    // What `laidOut` does for a box nothing asked a layout of, unplaced, told here without its
+    // two calls: this is asked of every node merged, and an app of plain flex asks nothing.
+    if (this.asked !== 0 || this.checksAsks || merged['position'] !== undefined) {
+      this.laidOut(node, merged);
+    } else {
+      if (merged['maxHeight'] !== undefined) leastWins(merged, 'Height');
+      if (merged['maxWidth'] !== undefined) leastWins(merged, 'Width');
+    }
     return merged;
-  }
-
-  /** What a paragraph alone is styled with: how its text is aligned, cut off and held tall. */
-  private paragraphStyled(node: EngineNode, style: Record<string, unknown>): void {
-    alignText(style, this.directionOf(node, style));
-    this.wholeWords(node, style);
-    lineTall(style, this.tallestRun(node, style, 0), this.fontScale);
   }
 
   /** A run of text as it is committed: a word to a line while how narrow it goes is read. */
@@ -12803,6 +12876,9 @@ export class Engine implements HostEngine {
     node.subtreeDirty = false;
   }
 
+  // Exempt from the complexity limit as `mergeProps` is: run for every node a commit restyles,
+  // where the clone in a function of its own was a call more a node in `pnpm bench:tailwind`.
+  // eslint-disable-next-line complexity
   private reconcile(node: EngineNode): FabricNode {
     // A clean node can still need re-rendering: if an ancestor's class changed, what this node
     // inherits changed with it, and nothing marked this node dirty. The resolver hands back the
@@ -12812,13 +12888,13 @@ export class Engine implements HostEngine {
     const styleChanged = node.styleCommitted !== style;
     if (this.isClean(node) && !styleChanged) return node.committed!.handle;
     // What a commit changed is noted, and a box planned again, for a layout of the engine's.
-    if (styleChanged && this.asked & LAYOUTS) this.noteChanged(node);
+    const layouts = this.asked & LAYOUTS;
+    if (layouts !== 0 && styleChanged) this.noteChanged(node);
     node.styleCommitted = style;
     repaint(node);
     this.refitChildren(node);
-    if (this.asked & LAYOUTS) this.relayout(node);
-
-    if (node.scrollsOverflow) this.settleScrolling(node);
+    if (layouts !== 0) this.relayout(node);
+    const scroller = node.scrollsOverflow === true && this.settleScrolling(node);
     const viewName = committedViewName(node);
     this.forgetRenamed(node, viewName);
     this.noteBaselineFields(node);
@@ -12827,12 +12903,37 @@ export class Engine implements HostEngine {
     if (this.fixedIn.size) this.fixedHandles(node, childHandles);
     this.raise(node, viewName);
     noteTouches(node, style);
-    if (node.scrollView) return this.reconcileScroller(node, viewName, childHandles, styleChanged);
+    if (scroller) return this.reconcileScroller(node, viewName, childHandles, styleChanged);
     const previous = node.committed;
     this.notePresented(node, viewName);
     if (!previous)
       return this.create(node, viewName, this.mergeProps(node, viewName), childHandles);
-    return this.recloned(node, viewName, childHandles, styleChanged, previous);
+    // A node that is committed, cloned for what changed of it: its props, its children.
+    // `propsDirty` is precise: Angular only calls setProperty when a binding actually changed.
+    // It is not sufficient on its own, though. A node whose ancestor's class changed inherits
+    // something new without any binding of its own having moved, so it is not propsDirty and
+    // would never re-clone. `styleChanged` is the other half of that question. An ancestor that
+    // is here only because something beneath it moved has the props it had.
+    const propsMoved = node.propsDirty || styleChanged;
+    const props = propsMoved ? this.mergeProps(node, viewName) : previous.props;
+    const propsPayload = propsMoved ? this.propsPayload(node, previous.props, props) : null;
+    if (this.asked & LAYOUTS) this.noteHow(node, propsPayload);
+    const childrenChanged = this.childrenMoved(node, childHandles, previous.childHandles);
+    if (this.notesMoves)
+      this.noteClone(node, propsPayload, childrenChanged, childHandles, previous);
+    let handle = previous.handle;
+    if (childrenChanged || propsPayload) {
+      handle = this.clone(
+        previous.handle,
+        propsPayload && this.processed(propsPayload, true),
+        childrenChanged ? childHandles : null,
+      );
+      // A clone is the same view, so it keeps the tag it was created with, not the newest tag
+      // handed out, which is some other node's.
+      node.committed = { handle, tag: previous.tag, props, childHandles, viewName };
+    }
+    this.clearFlags(node);
+    return handle;
   }
 
   /**
@@ -12873,50 +12974,16 @@ export class Engine implements HostEngine {
     return more > 0 ? this.grownBoxes : this.movedBoxes;
   }
 
-  /** A node that is committed, cloned for what changed of it: its props, its children. */
-  private recloned(
-    node: EngineNode,
-    viewName: string,
-    childHandles: FabricNode[],
-    styleChanged: boolean,
-    previous: NonNullable<EngineNode['committed']>,
-  ): FabricNode {
-    // `propsDirty` is precise: Angular only calls setProperty when a binding actually changed.
-    // It is not sufficient on its own, though. A node whose ancestor's class changed inherits
-    // something new without any binding of its own having moved, so it is not propsDirty and
-    // would never re-clone. `styleChanged` is the other half of that question. An ancestor that
-    // is here only because something beneath it moved has the props it had.
-    const propsMoved = node.propsDirty || styleChanged;
-    const props = propsMoved ? this.mergeProps(node, viewName) : previous.props;
-    const payload = propsMoved ? this.propsPayload(node, previous.props, props) : null;
-
-    if (this.asked & LAYOUTS) this.noteHow(node, payload);
-    const childrenChanged = this.childrenMoved(node, childHandles, previous.childHandles);
-    const propsPayload = payload;
-    if (this.notesMoves)
-      this.noteClone(node, propsPayload, childrenChanged, childHandles, previous);
-
-    let handle = previous.handle;
-    if (childrenChanged || propsPayload) {
-      handle = this.clone(
-        previous.handle,
-        propsPayload && this.processed(propsPayload, true),
-        childrenChanged ? childHandles : null,
-      );
-      // A clone is the same view, so it keeps the tag it was created with, not the newest tag
-      // handed out, which is some other node's.
-      node.committed = { handle, tag: previous.tag, props, childHandles, viewName };
-    }
-    this.clearFlags(node);
-    return handle;
-  }
-
-  /** Whether an element said to scroll its overflow is to: its style says `auto` or `scroll`. */
-  private settleScrolling(node: EngineNode): void {
+  /**
+   * Whether an element said to scroll its overflow is to: its style says `auto` or `scroll`. Noted
+   * on the node, for the view it is committed as, and answered.
+   */
+  private settleScrolling(node: EngineNode): boolean {
     // A sheet's `auto` is compiled to `scroll`; an inline style's is not.
     const overflow = readStyle(node, 'overflow');
     if (overflow === 'scroll' || overflow === 'auto') node.scrollView = true;
     else node.scrollView = undefined;
+    return node.scrollView === true;
   }
 
   /**
@@ -13028,6 +13095,9 @@ export class Engine implements HostEngine {
    * handle as it stands, so it is answered here without the call, the resolve and the walk -
    * which, per child, was most of what a one-row update cost.
    */
+  // Exempt from the complexity limit as `mergeProps` is: run for every node with children, where
+  // the loop in a function of its own was a call more a node in `pnpm bench`.
+  // eslint-disable-next-line complexity
   private reconcileChildren(
     node: EngineNode,
     viewName: string,
@@ -13037,18 +13107,7 @@ export class Engine implements HostEngine {
     if (HOIST_ONLY.has(node.tag)) return this.reconcileOnlyHoisted(node);
     if (HOIST_TARGETS.has(node.tag)) return this.reconcileHoistTarget(node, context);
     if (node.flow !== undefined) return this.reconcileInFlow(node, node.flow, viewName, context);
-    return this.reconcileEach(node, viewName, context);
-  }
-
-  /**
-   * `reconcileChildren` for a node with no flow of its own, which holds nothing in a line:
-   * each child is its own view under it, asked here and not through a call for each.
-   */
-  private reconcileEach(
-    node: EngineNode,
-    viewName: string,
-    context: object | undefined,
-  ): FabricNode[] {
+    // A node with no flow of its own holds nothing in a line: each child is its own view under it.
     const handles: FabricNode[] = [];
     for (const child of node.childList) {
       const clean = this.cleanUnder(node, child, context);

@@ -806,10 +806,6 @@ const SHAPE_PAINT_INHERITED: ReadonlySet<string> = new Set(['fill', 'stroke', 's
 export const handsDownPaint = (key: string): boolean =>
   key === 'propList' || SHAPE_PAINT_INHERITED.has(key);
 
-/** Whether a key is inherited, by a node of a library's drawing or by any other. */
-const inherits = (key: string, drawing: boolean): boolean =>
-  INHERITED.has(key) || (drawing && SHAPE_PAINT_INHERITED.has(key));
-
 /**
  * `border-style: none`, which the compiler writes as a style native does not have. On the web it
  * makes every border width 0, whichever rule set the width, so `border-hidden border-x` draws no
@@ -1012,27 +1008,6 @@ function ownedBy(node: StyleTarget, compound: Compound, sheet: StyleSheet | null
   return node.templateSheet === sheet;
 }
 
-/** `:not()`: the node is none of its arguments, a compound or a longer selector. */
-function matchesNone(node: StyleTarget, compound: Compound, sheet: StyleSheet | null): boolean {
-  for (const excluded of compound.not!) {
-    if (matchesCompound(node, excluded, sheet)) return false;
-  }
-  for (const excluded of compound.notComplex ?? []) {
-    if (matchesComplex(node, excluded, sheet)) return false;
-  }
-  return true;
-}
-
-/** `:is()` and `:where()`: the node is one of each list of alternatives. */
-function matchesEach(node: StyleTarget, compound: Compound, sheet: StyleSheet | null): boolean {
-  for (const alternatives of compound.is!) {
-    if (!alternatives.some((option) => matchesCompound(node, option, sheet))) return false;
-  }
-  for (const alternatives of compound.isComplex ?? []) {
-    if (!alternatives.some((option) => matchesComplex(node, option, sheet))) return false;
-  }
-  return true;
-}
 /*
  * Exempt from the complexity limit deliberately. This is a flat conjunction of independent
  * guards, not nested logic: cyclomatic complexity scores the two the same, and they are not the
@@ -1067,7 +1042,8 @@ function matchesCompound(node: StyleTarget, compound: Compound, sheet: StyleShee
     }
   }
   if (compound.type !== undefined) {
-    if (compound.type !== typeOf(node)) return false;
+    // `typeOf`, asked here without the call: this is asked of every compound tested.
+    if (compound.type !== (node.typeName ?? node.tag)) return false;
     // A generated box is no element to a compound that names none, `*` or a class alone, as a
     // pseudo-element is none in a browser: one character told from any element's name.
   } else if (boxesDrawn && node.tag.charCodeAt(0) === COLON) return false;
@@ -1087,8 +1063,28 @@ function matchesCompound(node: StyleTarget, compound: Compound, sheet: StyleShee
       if (!matchesNth(node, test)) return false;
     }
   }
-  if (compound.not && !matchesNone(node, compound, sheet)) return false;
-  if (compound.is && !matchesEach(node, compound, sheet)) return false;
+  // `:not()`: the node is none of its arguments, a compound or a longer selector.
+  if (compound.not) {
+    for (const excluded of compound.not) {
+      if (matchesCompound(node, excluded, sheet)) return false;
+    }
+    if (compound.notComplex) {
+      for (const excluded of compound.notComplex) {
+        if (matchesComplex(node, excluded, sheet)) return false;
+      }
+    }
+  }
+  // `:is()` and `:where()`: the node is one of each list of alternatives.
+  if (compound.is) {
+    for (const alternatives of compound.is) {
+      if (!alternatives.some((option) => matchesCompound(node, option, sheet))) return false;
+    }
+    if (compound.isComplex) {
+      for (const alternatives of compound.isComplex) {
+        if (!alternatives.some((option) => matchesComplex(node, option, sheet))) return false;
+      }
+    }
+  }
   if (compound.has) {
     for (const test of compound.has) {
       if (!hasBeneath(node, test, sheet)) return false;
@@ -2523,7 +2519,7 @@ function reach(node: StyleTarget, index: RuleIndex, found: IndexedEntry[]): void
     if (bucket) found.push(...bucket);
   };
   if (index.universal.length) found.push(...index.universal);
-  take(`type:${typeOf(node)}`);
+  take(`type:${node.typeName ?? node.tag}`);
   const id = node.props['nativeID'];
   if (typeof id === 'string') take(`id:${id}`);
   if (node.classes) for (const name of node.classes) take(`class:${name}`);
@@ -3260,7 +3256,7 @@ function inheritFrom(
   const drawing = node?.namespace !== undefined;
   let inherited = drawing ? ownPaint(node!, parentInherited, own) : parentInherited;
   for (const key of Object.keys(own)) {
-    if (!inherits(key, drawing)) continue;
+    if (!(INHERITED.has(key) || (drawing && SHAPE_PAINT_INHERITED.has(key)))) continue;
     // `pointer-events: inherit`, which only an inline style on an element no rule matches still
     // holds here: what the parent hands down stands.
     if (key === 'pointerEvents' && own[key] === 'inherit') continue;
@@ -3338,12 +3334,19 @@ function drawsLine(line: unknown): boolean {
   return line !== undefined && line !== 'none';
 }
 
-/** Whether an inline style sets a property children inherit. Allocates nothing: it runs per set. */
+/**
+ * Whether an inline style sets a property children inherit, by a node of a library's drawing or by
+ * any other. Allocates nothing, and calls nothing a key: it runs per set.
+ */
 export function setsInherited(style: unknown, drawing = false): boolean {
   if (!style || typeof style !== 'object') return false;
   if (Array.isArray(style)) return style.some((entry) => setsInherited(entry, drawing));
   for (const key in style) {
-    if (inherits(key, drawing) && (style as Record<string, unknown>)[key] != null) return true;
+    if (
+      (INHERITED.has(key) || (drawing && SHAPE_PAINT_INHERITED.has(key))) &&
+      (style as Record<string, unknown>)[key] != null
+    )
+      return true;
   }
   return false;
 }
@@ -3357,7 +3360,12 @@ export function inlineInherited(style: unknown, drawing = false): Record<string,
   let out: Record<string, unknown> | null = null;
   // Flattened first, as native applies it, so a later entry's null clears an earlier value.
   for (const [key, value] of Object.entries(flattenInline(style, {}))) {
-    if (inherits(key, drawing) && value !== undefined && value !== null) (out ??= {})[key] = value;
+    if (
+      (INHERITED.has(key) || (drawing && SHAPE_PAINT_INHERITED.has(key))) &&
+      value !== undefined &&
+      value !== null
+    )
+      (out ??= {})[key] = value;
   }
   return out;
 }
