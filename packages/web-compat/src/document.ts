@@ -12,6 +12,7 @@ import { implementationFor } from './dom-implementation.ts';
 import { byClassName, byName, byTagName, byTagNameNS } from './elements-by.ts';
 import { dispatch, listen, passiveFor, unlisten } from './events.ts';
 import { madeByScript } from './html-tree.ts';
+import { elementsUnder } from './element-tree.ts';
 import { descendants } from './in-document.ts';
 import { delivering, touchFields } from './listen.ts';
 import { NODE_CONSTANTS } from './node-constants.ts';
@@ -25,6 +26,7 @@ import {
   XHTML,
   type QualifiedName,
 } from './qualified-name.ts';
+import { query } from './selector.ts';
 import { createNodeIterator, createTreeWalker } from './traversal.ts';
 import { listenToResize } from './window.ts';
 
@@ -52,12 +54,14 @@ export function ownView(engine: Engine): EngineNode {
 }
 
 /**
- * What an element is called: the root is `html` and the body `body`, which is where a library
- * walking up through parents knows to stop.
+ * What an element is called: the root is `html`, the head `head` and the body `body`, which is
+ * where a library walking up through parents knows to stop, and where one puts its styles.
  */
 export function nameOf(node: EngineNode, engine: Engine): string {
   if (engine.root === node) return 'html';
-  return documents.get(engine)?.body === node ? 'body' : node.tag;
+  const document = documents.get(engine);
+  if (document?.body === node) return 'body';
+  return document?.head === node ? 'head' : node.tag;
 }
 
 /**
@@ -337,6 +341,17 @@ export function documentFor(engine: Engine): CompatDocument {
     yield* descendants(head);
     yield* descendants(engine.root);
   }
+  /** The elements a query of the document looks at: `<html>`, then the head, then the page. */
+  function* elements(): Generator<EngineNode> {
+    yield engine.root;
+    yield head;
+    yield* elementsUnder(head);
+    yield* elementsUnder(engine.root);
+  }
+  const first = (...args: unknown[]): EngineNode | null => {
+    required(args, 1, 'querySelector');
+    return query(elements(), String(args[0]), engine.root, true)[0] ?? null;
+  };
   // A listener on the body hears the whole page, as one on the document does.
   const bodyListeners = anywhere(engine, body);
   /** Its `implementation`, made the first time it is asked for. */
@@ -430,6 +445,12 @@ export function documentFor(engine: Engine): CompatDocument {
     getElementsByName: (name: unknown) => byName(engine, everything, name),
     getElementsByTagNameNS: (namespace: unknown, local: unknown) =>
       byTagNameNS(engine, everything, namespace, local),
+    // By a selector: see `selector.ts`.
+    querySelector: first,
+    querySelectorAll: (...args: unknown[]) => {
+      required(args, 1, 'querySelectorAll');
+      return query(elements(), args[0], engine.root, false);
+    },
     // Documents a script makes for itself, which are never drawn: see `dom-implementation.ts`.
     get implementation() {
       return (implementation ??= implementationFor(engine, created as never, created));
