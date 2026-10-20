@@ -285,7 +285,7 @@ gesture, or none of that kind.
 function waitFor<T>(callback: () => T | Promise<T>, options?: WaitForOptions): Promise<T>;
 
 interface WaitForOptions {
-  timeout?: number; // 1000
+  timeout?: number; // 1000, or what configure() set
   interval?: number; // 50
 }
 ```
@@ -311,6 +311,27 @@ Resolves once the node, the nodes, or whatever the callback returns have left th
 A callback that throws or returns `null` counts as removed. It rejects at once if the target is
 already gone when it starts, as Testing Library's does, because a wait for something that is
 already absent passes for the wrong reason.
+
+### `configure`
+
+```ts
+function configure(options: { asyncUtilTimeout?: number }): void;
+function resetToDefaults(): void;
+```
+
+`asyncUtilTimeout` is the `timeout` that `waitFor`, every `findBy*` query and
+`waitForElementToBeRemoved` use when a call does not pass one, 1000 by default, as in React Native
+Testing Library. A suite that runs on a slow machine sets it once, in a setup file, rather than on
+every call:
+
+```ts
+import { configure } from '@ng-native/testing';
+
+configure({ asyncUtilTimeout: 3000 });
+```
+
+It holds for every test after it in the same process, until `resetToDefaults()` puts the default
+back. A test that changes it for itself puts it back in `finally`.
 
 ### `settle`
 
