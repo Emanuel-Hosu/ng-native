@@ -15,7 +15,12 @@ import {
   signal,
   type Signal,
 } from '@angular/core';
-import { reactNative, type NativeKeyboardEvent, type ReactNative } from './react-native.ts';
+import {
+  edgeToEdgeFlag,
+  reactNative,
+  type NativeKeyboardEvent,
+  type ReactNative,
+} from './react-native.ts';
 
 /** What the platform reports when the keyboard moves. */
 export interface KeyboardMetrics {
@@ -123,13 +128,10 @@ export function keyboardSource(): KeyboardSource {
 
 /**
  * What React Native's Android `measureInWindow` leaves out above a view: the status bar's height,
- * unless its edge-to-edge flag is on, which `DeviceInfo` reports. Zero on iOS.
+ * unless its edge-to-edge flag is on. Zero on iOS.
  */
 function windowTopOf(native: ReactNative): number {
-  if (native.Platform?.OS !== 'android') return 0;
-  const info = native.TurboModuleRegistry?.get('DeviceInfo') as
-    { getConstants?(): { isEdgeToEdge?: boolean } } | null | undefined;
-  if (info?.getConstants?.().isEdgeToEdge === true) return 0;
+  if (native.Platform?.OS !== 'android' || edgeToEdgeFlag(native)) return 0;
   return native.StatusBar?.currentHeight ?? 0;
 }
 

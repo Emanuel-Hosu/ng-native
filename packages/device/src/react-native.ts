@@ -160,6 +160,16 @@ export interface NativeKeyboardEvent {
 }
 
 /**
+ * React Native's edge-to-edge flag on Android, which its `DeviceInfo` module reports: whether it
+ * treats the app as drawn under the system bars, for its status bar and for where it measures from.
+ */
+export function edgeToEdgeFlag(native: ReactNative): boolean {
+  const info = native.TurboModuleRegistry?.get('DeviceInfo') as
+    { getConstants?(): { isEdgeToEdge?: boolean } } | null | undefined;
+  return info?.getConstants?.().isEdgeToEdge === true;
+}
+
+/**
  * `null` off a device, where each capability falls back to doing nothing - the same as an
  * optional injection token nobody provided.
  *
