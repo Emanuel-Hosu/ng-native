@@ -107,9 +107,9 @@ view's frame from `measureInWindow` is counted from the top of the window, and t
 always the same place:
 
 - **iOS**: the window starts at the top of the screen, and `windowTop` is zero.
-- **Android**: React Native measures from below the status bar unless its edge-to-edge flag is on,
-  even in an app that draws under the bar, which is what Expo Go does. `windowTop` is then the
-  status bar's height, and zero where the flag is on.
+- **Android**: when React Native's edge-to-edge flag is off, React Native measures from below the
+  status bar, even in an app that draws under the bar. Expo Go draws under the bar with the flag
+  off. `windowTop` is then the status bar's height, and zero when the flag is on.
 
 Take `windowTop` off `screenY` to have the keyboard's top in the window a view was measured in.
 `<keyboard-avoiding-view>`, `<keyboard-dock>` and a `<text-input>` focused with the keyboard up

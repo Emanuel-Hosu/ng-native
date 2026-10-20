@@ -48,10 +48,11 @@ function layoutEasingOf(easing: string | undefined): LayoutEasing | undefined {
  * measured in the window, and the keyboard's `screenY` brought into it: `(layout)` reports the top
  * in the parent's coordinates, and on a screen under a navigation bar those start a bar's height
  * down. RN leaves that to `keyboardVerticalOffset`, and a view that was not told came up short by
- * exactly that much, its bottom edge still behind the keyboard. On Android the window starts below
- * the status bar unless React Native's edge-to-edge flag is on, as in Expo Go, while `screenY`
- * counts from the top of the screen, so the keyboard's top is taken `Keyboard.windowTop` higher in
- * the window, or the view comes up short by the status bar. The overlap never exceeds the
+ * exactly that much, its bottom edge still behind the keyboard. On Android, when React Native's
+ * edge-to-edge flag is off (Expo Go leaves it off), the window starts below the status bar while
+ * `screenY` counts from the top of the screen, so the keyboard's top is taken `Keyboard.windowTop`
+ * higher in the window, or the view comes up short by the status bar; when the flag is on,
+ * `Keyboard.windowTop` is zero. The overlap never exceeds the
  * view's own height either: padding a view by more than it has pushes its content out of it.
  * When the keyboard source reports no `screenY`, the keyboard's height stands in.
  *

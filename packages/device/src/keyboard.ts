@@ -86,10 +86,10 @@ const metricsOf = (event: NativeKeyboardEvent): KeyboardMetrics => ({
  * stopped, with a duration of zero: they say nothing of the motion.
  *
  * Both platforms report the keyboard's `screenY` from the top of the screen. iOS measures a view
- * from there too. Android measures it from below the status bar unless React Native's edge-to-edge
- * flag is on, even in an app drawn under the bar, as Expo Go is: its `measureInWindow` leaves out
- * the bar's inset then. `windowTop` is that inset, which a layout takes off `screenY` to compare
- * the keyboard with a view it measured.
+ * from there too. Android measures it from below the status bar when React Native's edge-to-edge
+ * flag is off, even in an app drawn under the bar, such as Expo Go, which leaves the flag off: its
+ * `measureInWindow` leaves out the bar's inset then. `windowTop` is that inset, zero when the flag
+ * is on, which a layout takes off `screenY` to compare the keyboard with a view it measured.
  */
 export function keyboardSource(): KeyboardSource {
   const native = reactNative();
