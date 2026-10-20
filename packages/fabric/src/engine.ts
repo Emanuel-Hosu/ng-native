@@ -10906,7 +10906,7 @@ export class Engine implements HostEngine {
   /** What a touch on an element that keeps a drag holds off, while it lasts: see `holdSwipe`. */
   private heldFor(node: EngineNode, merged: Record<string, unknown>): void {
     if (node === this.swipeHeld) merged['gestureResponseDistance'] = NO_SWIPE;
-    if (node === this.scrollHeld) merged['scrollEnabled'] = false;
+    if (this.scrollHeld.size && this.scrollHeld.has(node)) merged['scrollEnabled'] = false;
   }
 
   /**
@@ -14318,7 +14318,7 @@ export class Engine implements HostEngine {
     if (!handle || !this.fabric.setIsJSResponder) return;
     const asked = this.responders.get(node)?.blockNativeResponder ?? false;
     // And for a drag an element's `touch-action` keeps from the page: see `holdSwipe`.
-    const block = asked || this.drag?.held === true;
+    const block = asked || this.drag?.held === true || this.dragKept;
     this.fabric.setIsJSResponder(handle, isResponder, block);
   }
 
@@ -14494,7 +14494,7 @@ export class Engine implements HostEngine {
     // A first finger down is a new touch: the last one's end never came where what it was on
     // went from under the finger.
     const fingers = (nativeEvent as { touches?: readonly unknown[] } | null)?.touches?.length;
-    if (this.drag && fingers === 1) this.releaseSwipe(null);
+    if ((this.drag || this.dragKept) && fingers === 1) this.releaseSwipe(null);
     if (this.drag || !target) return;
     const actions = touchActions(target);
     if (!keeps(actions, PANS_ACROSS)) return;
@@ -14507,20 +14507,36 @@ export class Engine implements HostEngine {
     this.tellScreen(screen);
   }
 
-  /** The scroll view whose scrolling is off while a drag over it is an element's own. */
-  private scrollHeld: EngineNode | null = null;
+  /** The scroll views whose scrolling is off while a drag over them is an element's own. */
+  private readonly scrollHeld = new Set<EngineNode>();
+
+  /** Whether a package has kept the drag now under way from the page: see `keepDrag`. */
+  private dragKept = false;
 
   /**
-   * Stop the scroll view a node is in from scrolling, until the touch ends. Telling native who
-   * holds the touch does this on Android. On iOS a scroll view is held off only by a responder
-   * that is over it, never one inside it, so it is told not to scroll.
+   * Keep the drag now under way from the page, as a browser does for a `touchmove` a listener
+   * prevented the default of: the scroll view the node is in stops scrolling, and native is told
+   * that whoever holds the touch keeps it, until the last finger lifts. Told from a move, a
+   * frame or so after native saw it, so a scroll that had already begun stops where it is.
+   */
+  keepDrag(node: EngineNode): void {
+    if (this.dragKept) return;
+    this.dragKept = true;
+    if (this.currentResponder) this.tellNative(this.currentResponder, true);
+    if (!this.scrollHeld.size) this.holdScroll(node);
+  }
+
+  /**
+   * Stop every scroll view a node is in from scrolling, until the touch ends: one held off hands
+   * the drag to the one around it. Telling native who holds the touch does this on Android. On
+   * iOS a scroll view is held off only by a responder that is over it, never one inside it, so
+   * each is told not to scroll.
    */
   private holdScroll(node: EngineNode): void {
     for (let up = node.parent; up; up = up.parent) {
       if (up.nodeKind !== 'element' || !SCROLL_VIEWS.has(committedViewName(up))) continue;
-      this.scrollHeld = up;
+      this.scrollHeld.add(up);
       this.tellScreen(up);
-      return;
     }
   }
 
@@ -14543,11 +14559,11 @@ export class Engine implements HostEngine {
     const left = (nativeEvent as { touches?: readonly unknown[] } | null)?.touches?.length ?? 0;
     if (left > 0) return;
     this.drag = null;
-    for (const held of [this.scrollHeld, this.swipeHeld]) {
-      if (held === this.scrollHeld) this.scrollHeld = null;
-      else this.swipeHeld = null;
-      if (held) this.tellScreen(held);
-    }
+    this.dragKept = false;
+    const held = [...this.scrollHeld, this.swipeHeld];
+    this.scrollHeld.clear();
+    this.swipeHeld = null;
+    for (const each of held) if (each) this.tellScreen(each);
   }
 
   /**
