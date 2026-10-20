@@ -27,6 +27,7 @@ describe("Android's Back on a page that refuses it, presented from another tab",
   let navigation: NativeNavigation;
   let handlers: (() => boolean)[];
   let sheet: () => FakeFabricNode;
+  let screens: () => FakeFabricNode[];
 
   const pressBack = async (): Promise<boolean> => {
     const taken = [...handlers].reverse().some((handler) => handler());
@@ -56,6 +57,7 @@ describe("Android's Back on a page that refuses it, presented from another tab",
         },
       ],
     });
+    screens = () => flatten(app.fabric.committed).filter((node) => node.viewName === 'RNSScreen');
     sheet = () =>
       flatten(app.fabric.committed).find(
         (node) => node.viewName === 'RNSScreen' && node.props['stackPresentation'] === 'formSheet',
@@ -102,6 +104,22 @@ describe("Android's Back on a page that refuses it, presented from another tab",
     await fireEvent(sheet(), 'headerBackButtonClicked', {});
     for (let turn = 0; turn < 5; turn++) await settle();
     assert.equal(router.url, '/home', 'the arrow dismissed the page');
+  });
+
+  it('ignores the header back arrow of a page in a tab behind', async () => {
+    await router.navigateByUrl('/library/7');
+    await settle();
+    const albumScreen = screens()
+      .filter((node) => node.props['preventNativeDismiss'] === true)
+      .at(-1)!;
+    await router.navigateByUrl('/home');
+    for (let turn = 0; turn < 5; turn++) await settle();
+
+    // The tab behind still has the album on top, but it is not what is showing.
+    await fireEvent(albumScreen, 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(router.url, '/home');
+    assert.equal(album().attempts(), 0, 'nothing asked the page about an arrow nobody could see');
   });
 
   it('still lets the page leave through NativeNavigation.back()', async () => {

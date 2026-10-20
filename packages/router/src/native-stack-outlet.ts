@@ -849,7 +849,8 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       if (!this.refuseBack(screen)) this.dismissPresentedPage();
       return;
     }
-    if (screen !== this.top?.screen) return;
+    // A tab behind keeps its top screen, but nobody can tap its arrow: like Back, it is not asked.
+    if (screen !== this.top?.screen || !this.isShowing()) return;
     if (!this.refuseBack(screen)) this.goBack();
   }
 
