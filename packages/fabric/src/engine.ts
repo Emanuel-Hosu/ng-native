@@ -7860,7 +7860,20 @@ export class Engine implements HostEngine {
     let set = listeners.get(topLevelType);
     if (!set) listeners.set(topLevelType, (set = new Set()));
     set.add(fn);
-    return () => set.delete(fn);
+    // With the last of a type goes its set, and with the last set the map: `destroyNode` leaves
+    // them, so an empty one would stay on the node for good and read as someone listening. Only
+    // from the set it was put in: a teardown run again once that set is gone takes nothing from
+    // a later one, the same function listening again included.
+    let done = false;
+    return () => {
+      // Once: a teardown run again takes nothing, the same function listening again included.
+      if (done) return;
+      done = true;
+      const current = node.listeners?.get(topLevelType);
+      if (current !== set || !set.delete(fn) || set.size) return;
+      node.listeners!.delete(topLevelType);
+      if (!node.listeners!.size) node.listeners = null;
+    };
   }
 
   // --- dirty marking ----------------------------------------------------
@@ -12622,8 +12635,8 @@ export class Engine implements HostEngine {
    */
   private keeps(node: EngineNode, running: RunningAnimation): boolean {
     if (running.spec.fill === 'forwards' || running.spec.fill === 'both') return true;
-    // One that listened and has stopped leaves an empty set behind: nobody to hear it.
-    if (!node.listeners?.get('topAnimationend')?.size) return false;
+    // One that listened and has stopped takes its set with it: nobody to hear it.
+    if (!node.listeners?.has('topAnimationend')) return false;
     this.lettingGo.add(node);
     return true;
   }
