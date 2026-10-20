@@ -27,11 +27,48 @@ export interface TextMatchOptions {
   includeHiddenElements?: boolean;
 }
 
-/** `ByRole`'s options: a role alone matches every node with it, `name` narrows it to one. */
+/**
+ * `ByRole`'s options: a role alone matches every node with it, `name` narrows it to one, and a
+ * state narrows it to the nodes in that state, as React Native Testing Library's do.
+ */
 export interface ByRoleOptions extends TextMatchOptions {
   /** The accessible name: `accessibilityLabel`, or failing that the text inside the node. */
   name?: Matcher;
+  /** Disabled, from `accessibilityState` or `aria-disabled`; a field that is not editable is. */
+  disabled?: boolean;
+  selected?: boolean;
+  checked?: boolean | 'mixed';
+  busy?: boolean;
+  expanded?: boolean;
 }
+
+/** The states `ByRole` filters on. */
+const STATES = ['disabled', 'selected', 'checked', 'busy', 'expanded'] as const;
+type State = (typeof STATES)[number];
+
+/**
+ * A state as a screen reader has it: what `accessibilityState` says, which the components and the
+ * `aria-*` attributes write, or the attribute itself. Unset is false for the states that are off
+ * until something says otherwise, and stays unset for `checked` and `expanded`, which a node only
+ * has when it can be checked or expanded: React Native Testing Library's defaults.
+ */
+function stateOf(node: FakeFabricNode, state: State): boolean | 'mixed' | undefined {
+  if (state === 'disabled' && isTextInput(node) && node.props['editable'] === false) return true;
+  const said = (node.props['accessibilityState'] as Record<string, unknown> | undefined)?.[state];
+  const value = said ?? node.props[`aria-${state}`];
+  if (value === true || value === false || value === 'mixed') return value;
+  return state === 'checked' || state === 'expanded' ? undefined : false;
+}
+
+/** Whether a node is in every state the options ask for. */
+const inStates = (node: FakeFabricNode, options: ByRoleOptions): boolean =>
+  STATES.every((state) => options[state] === undefined || stateOf(node, state) === options[state]);
+
+/** The states the options ask for, for an error message. */
+const describeStates = (options: ByRoleOptions): string =>
+  STATES.filter((state) => options[state] !== undefined)
+    .map((state) => ` and ${state} ${String(options[state])}`)
+    .join('');
 
 interface QueryArgs {
   Role: [role: Matcher, options?: ByRoleOptions];
@@ -144,10 +181,13 @@ const nameOf = (node: FakeFabricNode): string =>
 const QUERIES: { [K in Name]: (...args: QueryArgs[K]) => Query } = {
   Role: (role, options = {}) => ({
     describe:
-      `role ${show(role)}` + (options.name === undefined ? '' : ` and name ${show(options.name)}`),
+      `role ${show(role)}` +
+      (options.name === undefined ? '' : ` and name ${show(options.name)}`) +
+      describeStates(options),
     select: (node) =>
       (matches(node.props['accessibilityRole'], role) || matches(node.props['role'], role)) &&
-      (options.name === undefined || matches(nameOf(node), options.name, options.exact)),
+      (options.name === undefined || matches(nameOf(node), options.name, options.exact)) &&
+      inStates(node, options),
   }),
   // `Paragraph` alone: a nested `<text>` commits as a `Text` span inside one, so the paragraph is
   // the whole run of text and the span is only a part of it.

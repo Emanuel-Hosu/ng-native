@@ -55,6 +55,34 @@ class List {
 })
 class Items {}
 
+@Component({
+  selector: 'x-states',
+  imports: [Pressable, Text, View],
+  template: `
+    <pressable
+      testID="save"
+      accessibilityRole="button"
+      [disabled]="saving()"
+      [accessibilityState]="{ busy: saving() }"
+    >
+      <text>Save</text>
+    </pressable>
+    <pressable testID="cancel" accessibilityRole="button"><text>Cancel</text></pressable>
+    <view testID="tab-a" accessibilityRole="tab" aria-selected="true"><text>A</text></view>
+    <view testID="tab-b" accessibilityRole="tab"><text>B</text></view>
+    <view testID="agree" accessibilityRole="checkbox" [accessibilityState]="{ checked: 'mixed' }">
+      <text>Agree</text>
+    </view>
+    <view testID="terms" accessibilityRole="checkbox"><text>Terms</text></view>
+    <view testID="more" accessibilityRole="button" aria-expanded="false"><text>More</text></view>
+    <text-input testID="locked" accessibilityRole="search" [editable]="false" />
+    <text-input testID="open" accessibilityRole="search" />
+  `,
+})
+class States {
+  readonly saving = signal(true);
+}
+
 describe('queries', () => {
   it('finds by test id, through testID or nativeID', async () => {
     await render(List);
@@ -72,6 +100,35 @@ describe('queries', () => {
       screen.queryByRole('listitem', { name: 'pears', exact: false })?.props['testID'],
       'second',
     );
+  });
+
+  it('finds by role in a state, as React Native Testing Library does', async () => {
+    await render(States);
+    const ids = (nodes: FakeFabricNode[]) => nodes.map((node) => node.props['testID']);
+    // A state no one set is false for disabled, selected and busy, and unset for checked and expanded.
+    assert.deepEqual(ids(screen.getAllByRole('button', { disabled: true })), ['save']);
+    assert.deepEqual(ids(screen.getAllByRole('button', { disabled: false })), ['cancel', 'more']);
+    assert.deepEqual(ids(screen.getAllByRole('button', { busy: true })), ['save']);
+    assert.deepEqual(ids(screen.getAllByRole('tab', { selected: true })), ['tab-a']);
+    assert.deepEqual(ids(screen.getAllByRole('tab', { selected: false })), ['tab-b']);
+    assert.deepEqual(ids(screen.getAllByRole('checkbox', { checked: 'mixed' })), ['agree']);
+    assert.equal(screen.queryByRole('checkbox', { checked: false }), null);
+    assert.deepEqual(ids(screen.getAllByRole('button', { expanded: false })), ['more']);
+    assert.deepEqual(ids(screen.getAllByRole('search', { disabled: true })), ['locked']);
+    assert.deepEqual(ids(screen.getAllByRole('search', { disabled: false })), ['open']);
+    assert.equal(screen.queryByRole('button', { name: 'Save', disabled: false }), null);
+    assert.throws(
+      () => screen.getByRole('button', { name: 'Save', disabled: false }),
+      /role "button" and name "Save" and disabled false/,
+    );
+  });
+
+  it('waits for a role to reach a state', async () => {
+    const { instance } = await render(States);
+    assert.equal(screen.queryByRole('button', { name: 'Save', disabled: false }), null);
+    setTimeout(() => instance.saving.set(false), 20);
+    const save = await screen.findByRole('button', { name: 'Save', disabled: false });
+    assert.equal(save.props['testID'], 'save');
   });
 
   it('names a labelled node by its label alone, as a screen reader does', async () => {
