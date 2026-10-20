@@ -46,16 +46,21 @@ export interface ByRoleOptions extends TextMatchOptions {
 const STATES = ['disabled', 'selected', 'checked', 'busy', 'expanded'] as const;
 type State = (typeof STATES)[number];
 
+/** The roles React Native Testing Library reads `checked` for; any other has none. */
+const CHECKABLE: ReadonlySet<unknown> = new Set(['checkbox', 'radio', 'switch']);
+
 /**
- * A state as a screen reader has it: what `accessibilityState` says, which the components and the
- * `aria-*` attributes write, or the attribute itself. Unset is false for the states that are off
- * until something says otherwise, and stays unset for `checked` and `expanded`, which a node only
- * has when it can be checked or expanded: React Native Testing Library's defaults.
+ * A state as a screen reader has it: what the committed `accessibilityState` says, which the
+ * components and the `aria-*` attributes write. Unset is false for the states that are off until
+ * something says otherwise, and stays unset for `checked` and `expanded`, which a node only has
+ * when it can be checked or expanded; `checked` only counts on a checkbox, radio or switch. React
+ * Native Testing Library's rules.
  */
 function stateOf(node: FakeFabricNode, state: State): boolean | 'mixed' | undefined {
   if (state === 'disabled' && isTextInput(node) && node.props['editable'] === false) return true;
-  const said = (node.props['accessibilityState'] as Record<string, unknown> | undefined)?.[state];
-  const value = said ?? node.props[`aria-${state}`];
+  if (state === 'checked' && !CHECKABLE.has(node.props['accessibilityRole'] ?? node.props['role']))
+    return undefined;
+  const value = (node.props['accessibilityState'] as Record<string, unknown> | undefined)?.[state];
   if (value === true || value === false || value === 'mixed') return value;
   return state === 'checked' || state === 'expanded' ? undefined : false;
 }

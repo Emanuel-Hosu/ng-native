@@ -74,6 +74,13 @@ class Items {}
       <text>Agree</text>
     </view>
     <view testID="terms" accessibilityRole="checkbox"><text>Terms</text></view>
+    <view testID="news" accessibilityRole="checkbox" [accessibilityState]="{ checked: false }">
+      <text>News</text>
+    </view>
+    <pressable testID="pin" accessibilityRole="button" [accessibilityState]="{ checked: true }">
+      <text>Pin</text>
+    </pressable>
+    <view testID="less" accessibilityRole="button" aria-expanded="true"><text>Less</text></view>
     <view testID="more" accessibilityRole="button" aria-expanded="false"><text>More</text></view>
     <text-input testID="locked" accessibilityRole="search" [editable]="false" />
     <text-input testID="open" accessibilityRole="search" />
@@ -107,12 +114,21 @@ describe('queries', () => {
     const ids = (nodes: FakeFabricNode[]) => nodes.map((node) => node.props['testID']);
     // A state no one set is false for disabled, selected and busy, and unset for checked and expanded.
     assert.deepEqual(ids(screen.getAllByRole('button', { disabled: true })), ['save']);
-    assert.deepEqual(ids(screen.getAllByRole('button', { disabled: false })), ['cancel', 'more']);
+    assert.deepEqual(ids(screen.getAllByRole('button', { disabled: false })), [
+      'cancel',
+      'pin',
+      'less',
+      'more',
+    ]);
     assert.deepEqual(ids(screen.getAllByRole('button', { busy: true })), ['save']);
     assert.deepEqual(ids(screen.getAllByRole('tab', { selected: true })), ['tab-a']);
     assert.deepEqual(ids(screen.getAllByRole('tab', { selected: false })), ['tab-b']);
     assert.deepEqual(ids(screen.getAllByRole('checkbox', { checked: 'mixed' })), ['agree']);
-    assert.equal(screen.queryByRole('checkbox', { checked: false }), null);
+    // Only the checkbox that says it is unchecked: one that says nothing has no checked state.
+    assert.deepEqual(ids(screen.getAllByRole('checkbox', { checked: false })), ['news']);
+    // A button has no checked state, whatever its accessibilityState says.
+    assert.equal(screen.queryByRole('button', { checked: true }), null);
+    assert.deepEqual(ids(screen.getAllByRole('button', { expanded: true })), ['less']);
     assert.deepEqual(ids(screen.getAllByRole('button', { expanded: false })), ['more']);
     assert.deepEqual(ids(screen.getAllByRole('search', { disabled: true })), ['locked']);
     assert.deepEqual(ids(screen.getAllByRole('search', { disabled: false })), ['open']);
