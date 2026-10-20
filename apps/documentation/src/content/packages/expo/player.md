@@ -1,6 +1,6 @@
 ---
 title: Video and audio player
-summary: videoPlayer()/audioPlayer(), released on destroy, and the <expo-video> view.
+summary: videoPlayer(), audioPlayer() and audioRecorder(), released on destroy, and <expo-video>.
 ---
 
 # Video and audio player
@@ -20,7 +20,7 @@ npx expo install expo-video expo-audio
 
 ```ts
 import { videoPlayer } from '@ng-native/expo/video';
-import { audioPlayer } from '@ng-native/expo/audio';
+import { audioPlayer, audioRecorder } from '@ng-native/expo/audio';
 ```
 
 Install only the one an app needs: each has its own entry point, so an app bundles with only its
@@ -87,6 +87,70 @@ The player is released when the component that created it is destroyed - no `ngO
 write. A player left alive holds its decoder, its audio session and, on iOS, the now-playing
 controls, so this happens automatically rather than being something a caller has to remember.
 
+## Playing with the silent switch on
+
+On iOS an app plays nothing while the silent switch is on, unless it says it plays anyway. That is
+`expo-audio`'s own `setAudioModeAsync`, a plain function with no React in it, so it is called
+directly, before playing:
+
+```ts
+import { setAudioModeAsync } from 'expo-audio';
+
+await setAudioModeAsync({ playsInSilentMode: true });
+```
+
+The mode belongs to the app, not to a player, and stays until it is set again. Android has no
+silent switch and plays either way.
+
+## `audioRecorder(options, { statusInterval? })`
+
+`audioRecorder()` is `useAudioRecorder` and `useAudioRecorderState` for a component: a recorder
+owned by the current component, released when it is destroyed, with its status as a signal. Call
+it in an injection context, as the players:
+
+```ts
+import { Component } from '@angular/core';
+import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
+import { audioRecorder } from '@ng-native/expo/audio';
+
+@Component({
+  selector: 'app-voice-note',
+  template: `<text>{{ recorder.state().durationMillis / 1000 }} s</text>`,
+})
+export class VoiceNote {
+  protected readonly recorder = audioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  async start(): Promise<void> {
+    if (!(await requestRecordingPermissionsAsync()).granted) return;
+    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+    await this.recorder.native.prepareToRecordAsync();
+    this.recorder.native.record();
+  }
+
+  async stop(): Promise<string | null> {
+    await this.recorder.native.stop();
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+    return this.recorder.native.uri;
+  }
+}
+```
+
+It returns a `Recorder<AudioRecorder>`:
+
+- **`native`** - the module's own recorder, for `prepareToRecordAsync()`, `record()`, `pause()`,
+  `stop()`, `uri` and the rest. `record()` after `pause()` goes on in the same file.
+- **`state`** - the recorder's `getStatus()`, asked every `statusInterval` milliseconds (500 by
+  default) while the component lives: `isRecording`, `durationMillis`, `canRecord`, `url`, and
+  `metering`, the level in decibels, when the options turn `isMeteringEnabled` on. A change under
+  50 ms of duration or 0.1 dB of level is no change, as in `useAudioRecorderState`.
+
+The recorder is made with `options` merged for the platform, as `useAudioRecorder` makes it, so
+`prepareToRecordAsync()` takes none. That matters on Android, where the recorder reads
+`isMeteringEnabled` only from the options it was made with: one prepared with it but made without
+it reports no `metering`. Android also measures the peak level where iOS measures the average, so
+the same voice reads louder there. Permissions and the audio mode are `expo-audio`'s own plain
+functions, as above.
+
 ## The `<expo-video>` view
 
 `videoPlayer()` gives you the player; showing it needs the view. Register it once, before the app
@@ -130,11 +194,11 @@ Audio has no view: `expo-audio` plays through the device's audio session, not a 
 
 ## Without the module installed
 
-`videoPlayer()` and `audioPlayer()` throw a `MissingModuleError` when `expo-video` (or
-`expo-audio`) is missing - never installed, or installed without the app being rebuilt since - on
-iOS, Android and the web alike, rather than returning a player that does nothing: there is no
-sensible default state for a player object with no native side. Its message names the module and
-the commands that fix it; see
+`videoPlayer()`, `audioPlayer()` and `audioRecorder()` throw a `MissingModuleError` when
+`expo-video` (or `expo-audio`) is missing - never installed, or installed without the app being
+rebuilt since - on iOS, Android and the web alike, rather than returning a player that does
+nothing: there is no sensible default state for a player object with no native side. Its message
+names the module and the commands that fix it; see
 [Using a module](/packages/expo/using-a-module#what-happens-without-the-module-installed). An
 `<expo-video>` with no `expo-video` installed commits as `UnimplementedNativeView` rather than
 throwing, since the element is registered independently of whether the JavaScript module was ever

@@ -7,10 +7,10 @@
  * are plain mutable fields no template can watch.
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import { Injector, runInInjectionContext } from '@angular/core';
 import { watchPlayer, type NativePlayer } from '@ng-native/expo/player';
-import { audioPlayer } from '@ng-native/expo/audio';
+import { audioPlayer, audioRecorder } from '@ng-native/expo/audio';
 import { videoPlayer } from '@ng-native/expo/video';
 
 /** Fakes `require`, the same seam `optional()` reaches through on a device or in Node. */
@@ -298,5 +298,131 @@ describe('owning a player', () => {
     assert.equal(owned.state().status, 'error', 'an error wins over loading');
 
     injector.destroy();
+  });
+});
+
+/** Fakes `require` for several modules at once: `expo-audio`, and `react-native` for the platform. */
+function withModules<T>(modules: Record<string, unknown>, run: () => T): T {
+  const host = globalThis as Record<string, unknown>;
+  host['require'] = (requested: string) => {
+    if (!(requested in modules)) throw new Error(`Cannot find module '${requested}'`);
+    return modules[requested];
+  };
+  try {
+    return run();
+  } finally {
+    delete host['require'];
+  }
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** A recorder that reports a status and records what it was made with. */
+function recorder() {
+  const status = {
+    canRecord: false,
+    isRecording: false,
+    durationMillis: 0,
+    mediaServicesDidReset: false,
+    url: null as string | null,
+  };
+  const made: unknown[] = [];
+  const api = {
+    released: false,
+    status,
+    made,
+    getStatus: () => ({ ...status }),
+    release() {
+      api.released = true;
+    },
+  };
+  class AudioRecorder {
+    constructor(options: unknown) {
+      made.push(options);
+      return api;
+    }
+  }
+  return { api, expoAudio: { AudioModule: { AudioRecorder } } };
+}
+
+const VOICE = {
+  extension: '.m4a',
+  sampleRate: 44100,
+  numberOfChannels: 1,
+  bitRate: 64000,
+  isMeteringEnabled: true,
+  android: { outputFormat: 'mpeg4', audioEncoder: 'aac' },
+  ios: { outputFormat: 'aac ', audioQuality: 64 },
+} as never;
+
+/**
+ * `audioRecorder`: expo-audio's `useAudioRecorder` and `useAudioRecorderState` without React. The
+ * recorder is a shared object made with the platform's options merged in, as the hook makes it, and
+ * released with the component.
+ */
+describe('owning a recorder', () => {
+  const after: (() => void)[] = [];
+  afterEach(() => {
+    for (const destroy of after.splice(0)) destroy();
+  });
+
+  it("makes the recorder with the platform's options merged in, as useAudioRecorder does", () => {
+    for (const [os, own] of [
+      ['android', { outputFormat: 'mpeg4', audioEncoder: 'aac' }],
+      ['ios', { outputFormat: 'aac ', audioQuality: 64 }],
+    ] as const) {
+      const { api, expoAudio } = recorder();
+      const injector = Injector.create({ providers: [] });
+      // Destroyed whatever happens: a recorder left alive keeps polling, and the test never ends.
+      after.push(() => injector.destroy());
+      const owned = withModules(
+        { 'expo-audio': expoAudio, 'react-native': { Platform: { OS: os } } },
+        () => runInInjectionContext(injector, () => audioRecorder(VOICE)),
+      );
+      // Android reads isMeteringEnabled from these alone, not from prepareToRecordAsync's.
+      assert.deepEqual(api.made, [
+        {
+          extension: '.m4a',
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 64000,
+          isMeteringEnabled: true,
+          directory: undefined,
+          ...own,
+        },
+      ]);
+      assert.equal(owned.native, api);
+      after.pop()!();
+      assert.equal(api.released, true, `released with the component on ${os}`);
+    }
+  });
+
+  it("follows the recorder's status while the component lives, and stops with it", async () => {
+    const { api, expoAudio } = recorder();
+    const injector = Injector.create({ providers: [] });
+    after.push(() => injector.destroy());
+    const owned = withModules({ 'expo-audio': expoAudio }, () =>
+      runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 5 })),
+    );
+    assert.equal(owned.state().isRecording, false, 'the status it had when it was made');
+
+    Object.assign(api.status, { isRecording: true, durationMillis: 1200, metering: -20 });
+    await sleep(40);
+    assert.equal(owned.state().isRecording, true);
+    assert.equal(owned.state().durationMillis, 1200);
+    assert.equal(owned.state().metering, -20);
+
+    after.pop()!();
+    api.status.durationMillis = 5000;
+    await sleep(40);
+    assert.equal(owned.state().durationMillis, 1200, 'no longer asked once the component is gone');
+  });
+
+  it('refuses to make one in Node, where expo-audio has nothing to load', () => {
+    const injector = Injector.create({ providers: [] });
+    assert.throws(
+      () => runInInjectionContext(injector, () => audioRecorder(VOICE)),
+      /expo-audio has no native module to load in Node/,
+    );
   });
 });
