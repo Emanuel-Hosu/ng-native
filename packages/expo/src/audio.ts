@@ -68,14 +68,35 @@ export function audioRecorder(
   // First, so a call outside an injection context throws before there is a recorder to leak.
   const destroyRef = inject(DestroyRef);
   const expo = expoAudio();
-  const native = new expo.AudioModule.AudioRecorder(forPlatform(options)) as AudioRecorder;
+  const native = makeRecorder(expo, forPlatform(options));
   const state = signal(native.getStatus(), { equal: sameStatus });
   const polling = setInterval(() => state.set(native.getStatus()), statusInterval);
   destroyRef.onDestroy(() => {
     clearInterval(polling);
-    native.release?.();
+    releaseRecorder(native);
   });
   return { native, state: state.asReadonly() };
+}
+
+/**
+ * The platform's recorder class. On the web `expo-audio`'s `AudioModule` is a plain module whose
+ * recorder is `AudioRecorderWeb`; elsewhere it is the native module's `AudioRecorder`.
+ */
+function makeRecorder(expo: ExpoAudio, options: Record<string, unknown>): AudioRecorder {
+  const module = expo.AudioModule as unknown as Record<string, new (o: unknown) => AudioRecorder>;
+  const Recorder =
+    currentPlatform() === 'web' ? module['AudioRecorderWeb'] : module['AudioRecorder'];
+  return new Recorder!(options);
+}
+
+/**
+ * What `useAudioRecorder` does when its component goes: the web recorder, which has no
+ * `release()`, clears its timeouts instead.
+ */
+function releaseRecorder(native: AudioRecorder): void {
+  const recorder = native as AudioRecorder & { clearTimeouts?: () => void };
+  if (currentPlatform() === 'web') recorder.clearTimeouts?.();
+  else recorder.release?.();
 }
 
 /** `expo-audio`'s own `createRecordingOptions`, which it does not export: the platform's merged in. */

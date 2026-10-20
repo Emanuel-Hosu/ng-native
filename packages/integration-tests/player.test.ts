@@ -329,7 +329,7 @@ function recorder() {
   const made: unknown[] = [];
   const api = {
     released: false,
-    status,
+    status: status as typeof status & { metering?: number },
     made,
     getStatus: () => ({ ...status }),
     release() {
@@ -343,6 +343,31 @@ function recorder() {
     }
   }
   return { api, expoAudio: { AudioModule: { AudioRecorder } } };
+}
+
+/** expo-audio on the web: AudioModule is a plain module with AudioRecorderWeb and no release(). */
+function webRecorder() {
+  const made: unknown[] = [];
+  const api = {
+    cleared: false,
+    getStatus: () => ({
+      canRecord: false,
+      isRecording: false,
+      durationMillis: 0,
+      mediaServicesDidReset: false,
+      url: null,
+    }),
+    clearTimeouts() {
+      api.cleared = true;
+    },
+  };
+  class AudioRecorderWeb {
+    constructor(options: unknown) {
+      made.push(options);
+      return api;
+    }
+  }
+  return { api, made, expoAudio: { AudioModule: { AudioRecorderWeb } } };
 }
 
 const VOICE = {
@@ -397,6 +422,28 @@ describe('owning a recorder', () => {
     }
   });
 
+  it('makes the web recorder on the web, and clears its timeouts with the component', () => {
+    const { api, made, expoAudio } = webRecorder();
+    const injector = Injector.create({ providers: [] });
+    after.push(() => injector.destroy());
+    const owned = withModules(
+      { 'expo-audio': expoAudio, 'react-native': { Platform: { OS: 'web' } } },
+      () => runInInjectionContext(injector, () => audioRecorder(VOICE)),
+    );
+    assert.equal(owned.native, api);
+    assert.deepEqual(made, [
+      {
+        extension: '.m4a',
+        sampleRate: 44100,
+        numberOfChannels: 1,
+        bitRate: 64000,
+        isMeteringEnabled: true,
+      },
+    ]);
+    withModules({ 'react-native': { Platform: { OS: 'web' } } }, () => after.pop()!());
+    assert.equal(api.cleared, true, 'useAudioRecorder clears the timeouts on the web');
+  });
+
   it("follows the recorder's status while the component lives, and stops with it", async () => {
     const { api, expoAudio } = recorder();
     const injector = Injector.create({ providers: [] });
@@ -416,6 +463,37 @@ describe('owning a recorder', () => {
     api.status.durationMillis = 5000;
     await sleep(40);
     assert.equal(owned.state().durationMillis, 1200, 'no longer asked once the component is gone');
+  });
+
+  it('keeps the same status for what useAudioRecorderState counts as no change', async () => {
+    const { api, expoAudio } = recorder();
+    const injector = Injector.create({ providers: [] });
+    after.push(() => injector.destroy());
+    Object.assign(api.status, { isRecording: true, durationMillis: 1000, metering: -20 });
+    const owned = withModules({ 'expo-audio': expoAudio }, () =>
+      runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 5 })),
+    );
+    const first = owned.state();
+
+    Object.assign(api.status, { durationMillis: 1050, metering: -20.05 });
+    await sleep(40);
+    assert.equal(owned.state(), first, '50 ms and under 0.1 dB is no change');
+
+    api.status.durationMillis = 1051;
+    await sleep(40);
+    assert.equal(owned.state().durationMillis, 1051, 'past 50 ms is a change');
+
+    const second = owned.state();
+    api.status.metering = -20.25;
+    await sleep(40);
+    assert.notEqual(owned.state(), second, 'past 0.1 dB is a change');
+    assert.equal(owned.state().metering, -20.25);
+
+    const third = owned.state();
+    api.status.url = 'file:///voice.m4a';
+    await sleep(40);
+    assert.notEqual(owned.state(), third, 'a new url is a change');
+    assert.equal(owned.state().url, 'file:///voice.m4a');
   });
 
   it('makes nothing outside an injection context, where nothing could release it', () => {
