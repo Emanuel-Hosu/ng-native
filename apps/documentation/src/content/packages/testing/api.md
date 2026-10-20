@@ -162,9 +162,9 @@ by default commits one without you writing it, the way `<switch>` commits `acces
 attributes write, as React Native Testing Library reads them. A state nothing set is `false` for
 `disabled`, `selected` and `busy`, and unset for `checked` and `expanded`, so `{ checked: false }`
 finds only a node that says it is unchecked. `checked` counts only on a `checkbox`, `radio` or
-`switch`; a node with any other role has no checked state. A `<text-input>` with `editable` false is disabled.
-`checked` can also be `'mixed'`. A `findByRole` with a state waits for the node to reach it, which
-is how a test waits for a button to be enabled again before pressing it:
+`switch`; a node with any other role has no checked state. A `<text-input>` with `editable` false
+is disabled. `checked` can also be `'mixed'`. A `findByRole` with a state waits for the node to
+reach it, which is how a test waits for a button to be enabled again before pressing it:
 
 ```ts
 await userEvent.press(await screen.findByRole('button', { name: 'Retry', disabled: false }));
