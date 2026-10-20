@@ -1,3 +1,37 @@
+## 0.17.1 (2026-10-20)
+
+### 🩹 Fixes
+
+- The packages run on Expo SDK 58 (React Native 0.88, gesture-handler 3, Reanimated 4.7) as well as SDK 57, and the template stays on SDK 57. ([#1039](https://github.com/ng-native/ng-native/pull/1039))
+
+  - `@ng-native/expo` and `@ng-native/web-compat` accept the SDK 58 versions of the Expo modules they peer on, and `@ng-native/components` gesture-handler 3, so npm installs them beside an SDK 58 app.
+  - The `@ng-native/metro` config plugin no longer stops `expo prebuild` on SDK 58, whose template has a scene delegate of its own: it keeps Expo's, and installs the iOS 27 status bar fix from the app delegate instead. On SDK 57 it writes what it did before.
+  - `FileSystem.write` has written by the time it returns on SDK 58, where `File.write` answers a promise, by calling `writeSync`.
+  - `StatusBar`'s `backgroundColor` and `translucent` do nothing and warn once on React Native 0.88, which removed both setters, where they threw a `TypeError` on Android.
+  - Gestures attach with gesture-handler 3, which installs its bindings itself.
+  - The Metro preset resolves React Native's `NativeAnimatedHelper`, which sticky headers move through, by its file, so an app bundles on React Native 0.88 without a warning about that package's exports.
+
+- `ByRole` in `@ng-native/testing` takes `disabled`, `selected`, `checked`, `busy` and `expanded`, as React Native Testing Library's does, so `findByRole('button', { name, disabled: false })` waits for the button to be enabled. ([#1024](https://github.com/ng-native/ng-native/pull/1024))
+
+  A state is read from the node's `accessibilityState`, which the components and the `aria-*` attributes write. When nothing sets a state, its value is false for `disabled`, `selected` and `busy`, and unset for `checked` and `expanded`; `checked` counts only on a `checkbox`, `radio` or `switch`. A `<text-input>` with `editable` false is disabled.
+
+- An Angular CLI workspace's native project gets a `typecheck` target, `ng run native:typecheck`, which runs `ngc` on its code and templates, and `ng generate component` writes into the project's `src/app`. ([#1038](https://github.com/ng-native/ng-native/pull/1038), [#1033](https://github.com/ng-native/ng-native/issues/1033))
+
+  `ng add @ng-native/schematics` and `ng generate @ng-native/schematics:application` write the target, run by the new `@ng-native/schematics:typecheck` builder: it loads the project's `metro.config.js`, so a Tailwind sheet `src/main.ts` imports exists, then runs `ngc -p tsconfig.json --noEmit`. The `native-typecheck-target` migration, which `ng update @ng-native/schematics` runs, adds it to each existing native project in `angular.json` that has no `typecheck` target. An `angular.json` with comments or trailing commas is left as it is, with a note saying what to add. A component generated from the project's own directory, the workspace root or outside the project now goes in `src/app/<name>`, beside `app.ts`, rather than at the project's root. Run from a directory inside `src`, it still goes there.
+
+- `nx typecheck` passes on a library `@ng-native/nx:library` generates in Nx's TypeScript preset, whose `tsconfig.base.json` turns on `declarationMap`, where it failed with TS5069. ([#1034](https://github.com/ng-native/ng-native/pull/1034), [#1031](https://github.com/ng-native/ng-native/issues/1031))
+
+  The generated `tsconfig.typecheck.json` now sets `"declarationMap": false` beside `"composite": false`. The `library-typecheck-declaration-map` migration, which `nx migrate` runs, adds the same line to the `tsconfig.typecheck.json` of a library generated before, or notes a config with comments, which it leaves as it is. See [Updating an app](https://ng-native.com/guide/updating).
+
+- The Metro transformer wraps the Babel transformer of the app's own `expo`, where in a pnpm workspace it could wrap a newer SDK's `@expo/metro-config` that pnpm had installed beside `@ng-native/metro`. ([#1035](https://github.com/ng-native/ng-native/pull/1035), [#1030](https://github.com/ng-native/ng-native/issues/1030))
+
+  pnpm resolves `@ng-native/metro`'s optional `@expo/metro-config` peer to the newest release, so an SDK 57 app in an Nx workspace was transformed by SDK 58's transformer. The copy beside `@ng-native/metro` is now used only when `expo` cannot be found from Metro's working directory, and an `expo` that cannot be read is reported rather than passed over.
+
+### ❤️ Thank You
+
+- Ashley Hunter
+- Emanuel Hosu @Emanuel-Hosu
+
 ## 0.17.0 (2026-10-20)
 
 ### 🚀 Features
