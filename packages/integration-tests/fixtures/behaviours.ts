@@ -97,6 +97,7 @@ export class HorizontalScroll {}
   template: `
     <scroll-view nativeID="never">
       <text-input nativeID="field" />
+      <view><text-input nativeID="next" /></view>
       <view nativeID="elsewhere"><text>tap here</text></view>
     </scroll-view>
     <scroll-view nativeID="always" keyboardShouldPersistTaps="always">
@@ -238,6 +239,7 @@ export class Switches {
   template: `
     <scroll-view nativeID="handled" keyboardShouldPersistTaps="handled">
       <text-input nativeID="field3" />
+      <view><text-input nativeID="next3" /></view>
       <pressable nativeID="button3"><text>button</text></pressable>
       <view nativeID="elsewhere3"><text>tap here</text></view>
     </scroll-view>
