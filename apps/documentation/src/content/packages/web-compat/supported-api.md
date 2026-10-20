@@ -113,14 +113,16 @@ Gaps:
 - Scrolling: an element whose style says `overflow: auto` or `scroll` scrolls what overflows it,
   with `scrollTop` and `scrollLeft` to read and write, `scroll`, `scrollTo`, `scrollBy` and
   `scrollIntoView`. `document.scrollingElement` is the root.
-- The window: `screen`, `visualViewport`, and `matchMedia` with a `change` listener.
+- The window: `screen`, `visualViewport`, `devicePixelRatio` as the screen's pixels in a point,
+  and `matchMedia` with a `change` listener.
 - `ResizeObserver`, and `IntersectionObserver` with a root, a margin and thresholds. An app that
   observes nothing pays nothing for them.
 
-Gaps: `ResizeObserver` has no `device-pixel-content-box`, and `scrollIntoView` reads no
-`scroll-margin` or `scroll-padding`. An element's browser defaults are its box sizing and whether
-it is a block, with no margins and no heading sizes, and a table is not laid out as a table. The
-window does not scroll.
+Gaps: `ResizeObserver` has no `device-pixel-content-box`, `matchMedia` does not read
+`resolution` or `-webkit-device-pixel-ratio`, and `scrollIntoView` reads no `scroll-margin` or
+`scroll-padding`. An element's browser defaults are its box sizing and whether it is a block,
+with no margins and no heading sizes, and a table is not laid out as a table. The window does not
+scroll.
 An inline element over two lines is one box around both, where a browser has two.
 A table's `clientTop` and `clientLeft` are its border's width with `border-collapse: collapse`
 too, where Chrome answers half of it. A table whose overflow is `scroll` or `auto` scrolls, where
@@ -145,11 +147,19 @@ tells it whether something is drawn over an element.
   document.
 - A `<button>` and an `<a>` take a press with no listener, are `:active` while held and marked
   `data-hover` while a pointer is over them, and are announced as disabled while they are.
+- A `touchmove` listener that is not passive and calls `preventDefault()` stops the scroll view
+  the finger is over from scrolling until the touch ends or is canceled, as a slider or a carousel
+  asks a browser to. A `touchstart`, `touchmove` or `wheel` listener on the window, the document
+  or the body is passive unless it says `passive: false`, as in a browser. Preventing a
+  `pointermove`'s default does not, as in a browser: `touch-action` keeps a pointer's drag from
+  the page.
 
 Gaps: `DragEvent`, `ClipboardEvent` and the other kinds not named here are not there. A handler
 written as an attribute's text is not compiled, and the window and the document have no handler
 properties. A field native refuses the focus to, a read-only one, is taken to have it until the
-next focus or blur.
+next focus or blur. A move whose default is prevented after the page has started to scroll
+stops the scroll where it is, where a browser lets it go on: native has the touch a frame or so
+before a listener hears of it.
 
 ## Forms
 
