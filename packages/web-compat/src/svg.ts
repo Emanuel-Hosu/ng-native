@@ -473,7 +473,9 @@ export function shapeOf(
     attrs,
     nativeProps(node.tag, attrs, { color: (colour: string) => engine.color(colour) }),
   );
-  drawn.set(node, { attrs: { ...attrs }, props });
+  // A script never reaches it to style it: what it is drawn by is all it was given.
+  const given = { ...attrs };
+  drawn.set(node, { attrs: given, written: given, props });
   for (const [key, value] of Object.entries(props)) engine.setProp(node, key, value);
   return node;
 }
@@ -497,7 +499,7 @@ export function reshape(
   for (const [key, value] of Object.entries(props)) {
     if (!sameProp(shape.props[key], value)) engine.setProp(node, key, value);
   }
-  shape.attrs = { ...attrs };
+  shape.attrs = shape.written = { ...attrs };
   shape.props = props;
 }
 
@@ -553,9 +555,21 @@ function startFilled(node: EngineNode, engine: Engine): void {
   }
 }
 
-/** What a shape was given as attributes, by a template or a script: none for what is no shape. */
+/**
+ * What a shape is drawn by: the attributes a template or a script gave it, and the styles a
+ * script set as them. None for what is no shape.
+ */
 export const shapeAttributes = (node: EngineNode): Readonly<Record<string, string>> =>
   drawn.get(node)?.attrs ?? NO_ATTRIBUTES;
+
+/** A shape's attributes alone, without the styles set as them: what `getAttribute` reads. */
+export const writtenAttributes = (node: EngineNode): Readonly<Record<string, string>> =>
+  drawn.get(node)?.written ?? NO_ATTRIBUTES;
+
+function setOrTake(values: Record<string, string>, name: string, value: unknown): void {
+  if (value == null) delete values[name];
+  else values[name] = String(value);
+}
 const NO_ATTRIBUTES: Readonly<Record<string, string>> = {};
 
 /** Whether a node is one of a drawing's own: a shape, a text or a span of one. */
@@ -616,7 +630,10 @@ const KEPT = /^(class|style|id|testID|nativeID|hidden|role|aria-.*|data-.*)$/;
 export const isKeptOnShape = (name: string): boolean => KEPT.test(name) && name !== 'id';
 
 interface Drawn {
+  /** What the shape is drawn by: its attributes, and the styles a script set as them. */
   attrs: Record<string, string>;
+  /** Its attributes alone, as a script reads them and a selector matches them. */
+  written: Record<string, string>;
   /** The props the attributes were last set as, to clear the ones that have gone. */
   props: Record<string, unknown>;
 }
@@ -624,29 +641,51 @@ const drawn = new WeakMap<EngineNode, Drawn>();
 
 /**
  * Take an attribute of an `<svg>` or of a shape in one, and set what the native view reads for
- * all it has. Answers whether it was one.
+ * all it has. Answers whether it was one. An attribute is handed to the engine as well, for a
+ * selector to match, where a style set as one is not: `styled` says it is a style.
  */
-export function setSvg(node: EngineNode, name: string, value: unknown, engine: Engine): boolean {
+export function setSvg(
+  node: EngineNode,
+  name: string,
+  value: unknown,
+  engine: Engine,
+  styled = false,
+): boolean {
   if (node.tag === 'stop') return stopChanged(node, engine);
   const drawn = node.tag === 'svg' || node.tag === SVG_SPAN || Object.hasOwn(SHAPES, node.tag);
-  return drawn && setShape(node, name, value, engine);
+  return drawn && setShape(node, name, value, engine, styled);
 }
 
-/** Give a copy of a shape, or of an `<svg>`, the attributes it was given: see `cloneNode`. */
+/**
+ * Give a copy of a shape, or of an `<svg>`, the attributes it was given, and the styles a script
+ * set as them as styles still: see `cloneNode`.
+ */
 export function copyShape(from: EngineNode, to: EngineNode, engine: Engine): void {
-  for (const [name, value] of Object.entries(shapeAttributes(from)))
-    setSvg(to, name, value, engine);
+  const written = writtenAttributes(from);
+  for (const [name, value] of Object.entries(written)) setSvg(to, name, value, engine);
+  for (const [name, value] of Object.entries(shapeAttributes(from))) {
+    if (written[name] !== value) setSvg(to, name, value, engine, true);
+  }
 }
 
-function setShape(node: EngineNode, name: string, value: unknown, engine: Engine): boolean {
+function setShape(
+  node: EngineNode,
+  name: string,
+  value: unknown,
+  engine: Engine,
+  styled: boolean,
+): boolean {
   const root = node.tag === 'svg';
   // An `id` is the renderer's, and the name of what a definition is referred to by as well.
   const kept = KEPT.test(name);
   if (kept && name !== 'id') return false;
   const shape = attributesOf(node);
-  if (value == null) delete shape.attrs[name];
-  else shape.attrs[name] = String(value);
+  setOrTake(shape.attrs, name, value);
   const written = shape.attrs[name];
+  if (!styled) {
+    setOrTake(shape.written, name, value);
+    engine.keepAttribute(node, name, written);
+  }
   if (root) {
     // Its own size is a default, as a browser has an attribute under any rule of a stylesheet.
     const props = drawAgain(node, engine);
@@ -1037,7 +1076,7 @@ function viewBox(written: string | undefined): Record<string, unknown> {
 
 function attributesOf(node: EngineNode): Drawn {
   let shape = drawn.get(node);
-  if (!shape) drawn.set(node, (shape = { attrs: {}, props: {} }));
+  if (!shape) drawn.set(node, (shape = { attrs: {}, written: {}, props: {} }));
   return shape;
 }
 

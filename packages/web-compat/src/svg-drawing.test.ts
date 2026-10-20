@@ -16,6 +16,7 @@ import {
   type FakeFabricNode,
 } from '@ng-native/testing';
 import { provideWebCompat } from './index.ts';
+import { shapeAttributes } from './svg.ts';
 import { textWidth } from './text-width.ts';
 
 afterEach(cleanup);
@@ -217,6 +218,89 @@ describe('@ng-native/web-compat svg by element name', () => {
       type: 0,
       payload: 'rgb(200, 200, 208)',
     });
+  });
+});
+
+describe('@ng-native/web-compat svg attributes in a selector', () => {
+  /** A page with a sheet a script writes into it, and a box to put a drawing in. */
+  const page = async (css: string) => {
+    const { host } = await mount();
+    const document = (globalThis as unknown as { document: Dom }).document;
+    const sheet = document.createElement('style');
+    sheet.textContent = css;
+    document.head.appendChild(sheet);
+    host.insertAdjacentHTML('beforeend', '<div class="box" id="attr"></div>');
+    await settle();
+    const svg = () => document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    return { document, box: host.querySelector('#attr') as Dom, svg };
+  };
+
+  it('matches a drawing a script makes by the attributes it gives it', async () => {
+    const { box, svg } = await page('svg[width="16"] { opacity: 0.5 }');
+    const made = svg();
+    made.setAttribute('width', '16');
+    box.appendChild(made);
+    assert.equal(getComputedStyle(made).opacity, '0.5');
+    made.setAttribute('width', '20');
+    assert.equal(getComputedStyle(made).opacity, '1');
+  });
+
+  it("matches a shape's attribute, and not a style a script sets as one", async () => {
+    const { document, box, svg } = await page('path[fill="none"] { opacity: 0.5 }');
+    const drawing = svg();
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    drawing.appendChild(path);
+    box.appendChild(drawing);
+    path.style.fill = 'none';
+    assert.equal(getComputedStyle(path).opacity, '1');
+    path.setAttribute('fill', 'none');
+    assert.equal(getComputedStyle(path).opacity, '0.5');
+  });
+
+  it('answers no attribute for a style a script sets as one, as a browser does', async () => {
+    const { document, box, svg } = await page('path { stroke: red }');
+    const drawing = svg();
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    drawing.appendChild(path);
+    box.appendChild(drawing);
+    path.style.fill = 'none';
+    assert.equal(path.getAttribute('fill'), null);
+    assert.equal(path.hasAttribute('fill'), false);
+    assert.equal(path.matches('path[fill="none"]'), false);
+    assert.equal([...path.getAttributeNames()].includes('fill'), false);
+    path.setAttribute('fill', 'none');
+    assert.equal(path.getAttribute('fill'), 'none');
+    assert.equal(path.matches('path[fill="none"]'), true);
+  });
+
+  it('copies a style a script set as a style, and not as an attribute', async () => {
+    const { document, box, svg } = await page('path[fill="none"] { opacity: 0.5 }');
+    const drawing = svg();
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('stroke', 'red');
+    drawing.appendChild(path);
+    box.appendChild(drawing);
+    path.style.fill = 'none';
+    const copy = path.cloneNode(true);
+    drawing.appendChild(copy);
+    assert.equal(getComputedStyle(path).opacity, '1');
+    assert.equal(getComputedStyle(copy).opacity, '1');
+    assert.equal(copy.getAttribute('fill'), null);
+    assert.equal(copy.getAttribute('stroke'), 'red');
+    assert.equal(copy.style.fill, 'none');
+  });
+
+  it("restyles a box's ::before as a drawing it matches by its attributes comes in", async () => {
+    const { box, svg } = await page(
+      '.box::before { content: " "; display: inline-block; width: 5px; height: 5px }' +
+        ' #attr:has(> [width="16"][height="16"])::before { width: 50px }',
+    );
+    assert.equal(getComputedStyle(box, '::before').width, '5px');
+    const made = svg();
+    made.setAttribute('width', '16');
+    made.setAttribute('height', '16');
+    box.appendChild(made);
+    assert.equal(getComputedStyle(box, '::before').width, '50px');
   });
 });
 
@@ -839,7 +923,8 @@ describe('@ng-native/web-compat svg definitions', () => {
     label.textContent = 'Polish';
     group.appendChild(label);
     await settle();
-    const size = () => Number(label.getAttribute('font-size'));
+    // What it is drawn at: a style is no attribute, so `getAttribute` answers none.
+    const size = () => Number(shapeAttributes(label)['font-size']);
     assert.ok(Math.abs(size() - 7.84) < 0.01, String(size()));
     group.style.fontSize = '1em';
     await settle();
