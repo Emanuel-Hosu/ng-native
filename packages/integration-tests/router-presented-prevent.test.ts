@@ -8,20 +8,25 @@ import { afterEach, before, beforeEach, describe, it } from 'node:test';
 import type { Type } from '@angular/core';
 import { Router, type Routes } from '@angular/router';
 import { HardwareBack } from '@ng-native/device';
-import { cleanup, render, settle } from '@ng-native/testing';
+import { cleanup, fireEvent, render, settle, type FakeFabricNode } from '@ng-native/testing';
 import { NativeNavigation } from '../router/src/native-navigation.ts';
 import { provideNativeRouter } from '../router/src/provide-native-router.ts';
 import { compileFixture } from './compile.ts';
 
 interface Album {
   attempts: () => number;
+  refusing: { set(value: boolean): void };
 }
+
+const flatten = (nodes: readonly FakeFabricNode[]): FakeFabricNode[] =>
+  nodes.flatMap((node) => [node, ...flatten(node.children)]);
 
 describe("Android's Back on a page that refuses it, presented from another tab", () => {
   let mod: Record<string, unknown>;
   let router: Router;
   let navigation: NativeNavigation;
   let handlers: (() => boolean)[];
+  let sheet: () => FakeFabricNode;
 
   const pressBack = async (): Promise<boolean> => {
     const taken = [...handlers].reverse().some((handler) => handler());
@@ -51,6 +56,10 @@ describe("Android's Back on a page that refuses it, presented from another tab",
         },
       ],
     });
+    sheet = () =>
+      flatten(app.fabric.committed).find(
+        (node) => node.viewName === 'RNSScreen' && node.props['stackPresentation'] === 'formSheet',
+      )!;
     router = app.componentRef.injector.get(Router);
     navigation = app.componentRef.injector.get(NativeNavigation);
     await settle();
@@ -78,6 +87,21 @@ describe("Android's Back on a page that refuses it, presented from another tab",
     assert.equal(await pressBack(), true, 'the press is taken, not passed to the platform');
     assert.equal(router.url, '/home(presented:library/7)', 'the sheet is still up');
     assert.equal(album().attempts(), 1, 'the page heard the attempt');
+  });
+
+  it("refuses the sheet's header back arrow, and dismisses the page once it stops refusing", async () => {
+    await navigation.present('/library/7', { as: 'formSheet' });
+    await settle();
+    await fireEvent(sheet(), 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(router.url, '/home(presented:library/7)', 'the sheet is still up');
+    assert.equal(album().attempts(), 1, 'the page heard the attempt');
+
+    album().refusing.set(false);
+    await settle();
+    await fireEvent(sheet(), 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(router.url, '/home', 'the arrow dismissed the page');
   });
 
   it('still lets the page leave through NativeNavigation.back()', async () => {

@@ -840,10 +840,15 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
 
   /**
    * Android's header back arrow on `screen`: refused where the screen refuses, as Back is, and
-   * otherwise a step back. react-native-screens sends the arrow of a stack's first screen on the
-   * screen the stack sits in, which holds the top screen's refusal for it.
+   * otherwise a step back, or the presented page dismissed when the screen is that page's.
+   * react-native-screens sends the arrow of a stack's first screen on the screen the stack sits
+   * in, which holds the top screen's refusal for it.
    */
   private onHeaderBack(screen: unknown): void {
+    if (screen === this.presentedPage?.screen) {
+      if (!this.refuseBack(screen)) this.dismissPresentedPage();
+      return;
+    }
     if (screen !== this.top?.screen) return;
     if (!this.refuseBack(screen)) this.goBack();
   }
