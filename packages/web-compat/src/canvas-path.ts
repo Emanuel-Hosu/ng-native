@@ -21,6 +21,27 @@ export function inverted([a, b, c, d, e, f]: Matrix): Matrix | null {
   return [d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det];
 }
 
+const POINT = /(-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?) (-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)/gi;
+
+/**
+ * A path as `canvas.ts` writes one, with each point moved by a transform. Each point is kept to
+ * as many places as the transform undone puts within a hundredth of the grid: a hundredth of a
+ * unit it shrinks 300 times is 3 on the grid.
+ */
+export function pathUnder(path: string, [a, b, c, d, e, f]: Matrix): string {
+  const step = 100 * 10 ** Math.max(0, Math.ceil(Math.log10(stretchUndone([a, b, c, d]))));
+  const round = (value: number) => Math.round(value * step) / step;
+  return path.replace(POINT, (_, given: string, other: string) => {
+    const [x, y] = [Number(given), Number(other)];
+    return `${round(a * x + c * y + e)} ${round(b * x + d * y + f)}`;
+  });
+}
+
+/** At most how far on the grid a point moves, given a transform's undoing, for one moved by 1. */
+function stretchUndone([a, b, c, d]: readonly number[]): number {
+  return (Math.hypot(a!, c!) + Math.hypot(b!, d!)) / Math.abs(a! * d! - b! * c!);
+}
+
 /** Some runs with each point moved by a transform. */
 export function mapped(runs: readonly Subpath[], [a, b, c, d, e, f]: Matrix): Subpath[] {
   return runs.map(({ points, closed }) => {
