@@ -12,8 +12,10 @@ import { Component, input, output, signal } from '@angular/core';
 import { Pressable, ScrollView, Text, TextInput, View } from '@ng-native/components';
 import {
   cleanup,
+  configure,
   fireEvent,
   render,
+  resetToDefaults,
   screen,
   userEvent,
   waitFor,
@@ -141,6 +143,34 @@ describe('queries', () => {
     );
     assert.equal((await screen.findAllByRole('listitem')).length, 2);
     assert.equal((await screen.findByTestId('list')).props['testID'], 'list');
+  });
+
+  it('waits as long as configure says, unless a call says otherwise', async () => {
+    const { instance } = await render(List);
+    const hide = async () => {
+      instance.shown.set(false);
+      await waitForElementToBeRemoved(() => screen.queryByText('Going soon'));
+    };
+    const show = () => setTimeout(() => instance.shown.set(true), 20);
+    await hide();
+    try {
+      // No time at all: one try, and the node arrives after it.
+      configure({ asyncUtilTimeout: 0 });
+      show();
+      await assert.rejects(screen.findByText('Going soon'), /Unable to find a node/);
+      await assert.rejects(
+        waitFor(() => screen.getByText('Going soon')),
+        /Unable to find a node/,
+      );
+      assert.ok(await screen.findByText('Going soon', undefined, { timeout: 500 }));
+
+      resetToDefaults();
+      await hide();
+      show();
+      assert.ok(await screen.findByText('Going soon'), 'a second, by default again');
+    } finally {
+      resetToDefaults();
+    }
   });
 
   it('waits for a held node to go, and refuses one that is already gone', async () => {
