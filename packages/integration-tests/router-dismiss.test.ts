@@ -100,6 +100,32 @@ describe("Android's Back on a screen that refuses a native dismissal", () => {
     assert.equal(page.attempts(), 0);
   });
 
+  it('leaves the header back arrow to JS on every screen, as react-navigation does', async () => {
+    const { screens } = await presentEditor();
+    // With it on, react-native-screens' Android arrow pops the screen natively, refusal or not.
+    for (const screen of screens()) {
+      assert.equal(screen.props['nativeBackButtonDismissalEnabled'], false);
+    }
+  });
+
+  it('refuses the header back arrow while the screen refuses, and goes back once it stops', async () => {
+    const { screens, page } = await presentEditor();
+    const top = () => screens().at(-1)!;
+    page.dirty.set(true);
+    await settle();
+    await fireEvent(top(), 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(screens().length, 2, 'the sheet is still there');
+    assert.equal(page.attempts(), 1, 'the page heard the attempt');
+
+    page.dirty.set(false);
+    await settle();
+    await fireEvent(top(), 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(screens().length, 1, 'the arrow went back');
+    assert.equal(page.attempts(), 1);
+  });
+
   it('still lets the page leave through NativeNavigation.back()', async () => {
     const { nav, screens, page } = await presentEditor();
     page.dirty.set(true);
@@ -208,6 +234,18 @@ describe('a page inside a presented stack that refuses a native dismissal', () =
     await settle();
     const before = screens().length;
     assert.equal(await pressBack(), true);
+    assert.equal(screens().length, before, 'the sheet is still there');
+    assert.equal(page.attempts(), 1);
+  });
+
+  it('refuses the header back arrow of the stack, which Android sends on the sheet', async () => {
+    // react-native-screens sends the arrow of a stack's first screen on the screen the stack is in.
+    const { screens, sheet, page } = await presentStack();
+    page.dirty.set(true);
+    await settle();
+    const before = screens().length;
+    await fireEvent(sheet(), 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
     assert.equal(screens().length, before, 'the sheet is still there');
     assert.equal(page.attempts(), 1);
   });
