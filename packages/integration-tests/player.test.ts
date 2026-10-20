@@ -418,6 +418,23 @@ describe('owning a recorder', () => {
     assert.equal(owned.state().durationMillis, 1200, 'no longer asked once the component is gone');
   });
 
+  it('makes nothing outside an injection context, where nothing could release it', () => {
+    const { api, expoAudio } = recorder();
+    // A poll that leaked would keep the test process alive: count it instead of running it.
+    const setInterval = globalThis.setInterval;
+    let polls = 0;
+    globalThis.setInterval = (() => ++polls) as unknown as typeof setInterval;
+    try {
+      withModules({ 'expo-audio': expoAudio }, () =>
+        assert.throws(() => audioRecorder(VOICE), /NG0203|injection context/),
+      );
+    } finally {
+      globalThis.setInterval = setInterval;
+    }
+    assert.deepEqual(api.made, [], 'no recorder left unreleased');
+    assert.equal(polls, 0, 'and no poll left running');
+  });
+
   it('refuses to make one in Node, where expo-audio has nothing to load', () => {
     const injector = Injector.create({ providers: [] });
     assert.throws(

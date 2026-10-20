@@ -65,11 +65,13 @@ export function audioRecorder(
   options: RecordingOptions,
   { statusInterval = 500 }: { statusInterval?: number } = {},
 ): Recorder<AudioRecorder> {
+  // First, so a call outside an injection context throws before there is a recorder to leak.
+  const destroyRef = inject(DestroyRef);
   const expo = expoAudio();
   const native = new expo.AudioModule.AudioRecorder(forPlatform(options)) as AudioRecorder;
   const state = signal(native.getStatus(), { equal: sameStatus });
   const polling = setInterval(() => state.set(native.getStatus()), statusInterval);
-  inject(DestroyRef).onDestroy(() => {
+  destroyRef.onDestroy(() => {
     clearInterval(polling);
     native.release?.();
   });
