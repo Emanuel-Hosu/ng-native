@@ -302,7 +302,7 @@ export class TextInput extends ViewBase {
   protected onFocus(): void {
     const { height, screenY } = this.keyboard.metrics();
     if (height > 0 && screenY !== undefined)
-      this.engine.reveal(this.node, { visibleBottom: screenY });
+      this.engine.reveal(this.node, { visibleBottom: screenY - this.keyboard.windowTop });
   }
 
   /** Bring the keyboard up on this field. A view command, so it reaches native directly. */

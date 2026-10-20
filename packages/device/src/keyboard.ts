@@ -15,13 +15,16 @@ import {
   signal,
   type Signal,
 } from '@angular/core';
-import { reactNative, type NativeKeyboardEvent } from './react-native.ts';
+import { reactNative, type NativeKeyboardEvent, type ReactNative } from './react-native.ts';
 
 /** What the platform reports when the keyboard moves. */
 export interface KeyboardMetrics {
   /** Height in dp; zero when the keyboard is hidden. */
   readonly height: number;
-  /** Where its top edge is, from the top of the screen. Absent when hidden. */
+  /**
+   * Where its top edge is, from the top of the screen. Absent when hidden. A view measured in the
+   * window is compared with it less `Keyboard.windowTop`.
+   */
   readonly screenY?: number;
   /** How long its own animation takes, in ms, for anything moving with it. */
   readonly duration?: number;
@@ -44,6 +47,11 @@ export interface KeyboardSource {
    */
   subscribeMotion?(listener: (frame: KeyboardMetrics | null) => void): () => void;
   dismiss(): void;
+  /**
+   * How far below the top of the screen the window a view is measured in starts, in points, for
+   * a source that knows it is not zero. See `keyboardSource`.
+   */
+  readonly windowTop?: number;
 }
 
 /** The timing a keyboard event carries, when it carries any. */
@@ -71,6 +79,12 @@ const metricsOf = (event: NativeKeyboardEvent): KeyboardMetrics => ({
  * Android sends no Will events at all, so there it is the Did events. They arrive once the
  * window's insets have changed, which is as the keyboard starts to move rather than once it has
  * stopped, with a duration of zero: they say nothing of the motion.
+ *
+ * Both platforms report the keyboard's `screenY` from the top of the screen. iOS measures a view
+ * from there too. Android measures it from below the status bar unless React Native's edge-to-edge
+ * flag is on, even in an app drawn under the bar, as Expo Go is: its `measureInWindow` leaves out
+ * the bar's inset then. `windowTop` is that inset, which a layout takes off `screenY` to compare
+ * the keyboard with a view it measured.
  */
 export function keyboardSource(): KeyboardSource {
   const native = reactNative();
@@ -78,6 +92,7 @@ export function keyboardSource(): KeyboardSource {
   const { Keyboard: keyboard, Platform } = native;
 
   return {
+    windowTop: windowTopOf(native),
     subscribe: (listener) => {
       if (Platform?.OS !== 'ios') {
         const subscriptions = [
@@ -104,6 +119,18 @@ export function keyboardSource(): KeyboardSource {
     },
     dismiss: () => keyboard.dismiss(),
   };
+}
+
+/**
+ * What React Native's Android `measureInWindow` leaves out above a view: the status bar's height,
+ * unless its edge-to-edge flag is on, which `DeviceInfo` reports. Zero on iOS.
+ */
+function windowTopOf(native: ReactNative): number {
+  if (native.Platform?.OS !== 'android') return 0;
+  const info = native.TurboModuleRegistry?.get('DeviceInfo') as
+    { getConstants?(): { isEdgeToEdge?: boolean } } | null | undefined;
+  if (info?.getConstants?.().isEdgeToEdge === true) return 0;
+  return native.StatusBar?.currentHeight ?? 0;
 }
 
 /**
@@ -158,6 +185,13 @@ export class Keyboard {
    * move with it instead. Elsewhere it is `metrics`, and a layout animates to where that says.
    */
   readonly followsMotion = this.source.subscribeMotion !== undefined;
+
+  /**
+   * How far below the top of the screen the window `measureInWindow` reports in starts: the status
+   * bar's height on Android unless React Native's edge-to-edge flag is on, and zero otherwise. The
+   * keyboard's top edge in that window is `screenY` less this.
+   */
+  readonly windowTop = this.source.windowTop ?? 0;
 
   /** Where the keyboard is now: at every frame of its motion where `followsMotion`. */
   readonly position: Signal<KeyboardMetrics> = computed(() => this.frame() ?? this.current());

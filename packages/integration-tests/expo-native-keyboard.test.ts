@@ -121,6 +121,14 @@ describe('the native keyboard source', () => {
     source.dismiss();
     assert.equal(dismissed(), 1);
   });
+
+  it("says the window starts where React Native's own source does, both reporting the screen", () => {
+    // The module's screenY is from the top of the screen too, so a view React Native measures
+    // from below the status bar is compared with it by the same allowance.
+    const native = { addListener: () => ({ remove: () => {} }) } as NativeKeyboard;
+    const fallback = { subscribe: () => () => {}, dismiss: () => {}, windowTop: 34 };
+    assert.equal(nativeKeyboardSource(native, fallback).windowTop, 34);
+  });
 });
 
 describe('provideNativeKeyboard', () => {

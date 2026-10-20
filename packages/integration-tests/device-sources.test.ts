@@ -294,6 +294,28 @@ describe('the keyboard source', () => {
     stop();
     assert.deepEqual(removed.sort(), ['keyboardDidHide', 'keyboardDidShow']);
   });
+
+  it('says where the window views are measured in starts, below the top of the screen', () => {
+    // React Native reports the keyboard's screenY from the top of the screen, and on Android
+    // measures a view from below the status bar unless its edge-to-edge flag is on, which Expo Go
+    // leaves off while drawing under the bar.
+    const windowTop = (os: string, isEdgeToEdge: boolean) => {
+      const native = {
+        Platform: { OS: os },
+        TurboModuleRegistry: {
+          get: (name: string) =>
+            name === 'DeviceInfo' ? { getConstants: () => ({ isEdgeToEdge }) } : null,
+        },
+        StatusBar: { currentHeight: 33.8 },
+        Keyboard: { dismiss: () => {}, addListener: () => ({ remove: () => {} }) },
+      };
+      return withNative(native, () => keyboardSource()).windowTop;
+    };
+
+    assert.equal(windowTop('android', false), 33.8, 'a status bar below the top of the screen');
+    assert.equal(windowTop('android', true), 0, 'at the top of the screen, edge to edge');
+    assert.equal(windowTop('ios', false), 0, 'iOS measures from where it reports the keyboard');
+  });
 });
 
 describe('the status bar source', () => {

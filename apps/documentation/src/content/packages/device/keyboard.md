@@ -100,6 +100,29 @@ keyboard. A bar that should stay on the keyboard exactly belongs in a
 [`<keyboard-dock>`](/packages/components/keyboard-avoiding-view#a-bar-that-rides-the-keyboard),
 which native moves.
 
+## Comparing the keyboard with a view
+
+`metrics().screenY` is the keyboard's top edge from the top of the screen, on both platforms. A
+view's frame from `measureInWindow` is counted from the top of the window, and the two are not
+always the same place:
+
+- **iOS**: the window starts at the top of the screen, and `windowTop` is zero.
+- **Android**: React Native measures from below the status bar unless its edge-to-edge flag is on,
+  even in an app that draws under the bar, which is what Expo Go does. `windowTop` is then the
+  status bar's height, and zero where the flag is on.
+
+Take `windowTop` off `screenY` to have the keyboard's top in the window a view was measured in.
+`<keyboard-avoiding-view>`, `<keyboard-dock>` and a `<text-input>` focused with the keyboard up
+already do; without it, each comes up short by the status bar's height on Android.
+
+```ts
+const keyboard = inject(Keyboard);
+const top = computed(() => {
+  const { screenY } = keyboard.metrics();
+  return screenY === undefined ? undefined : screenY - keyboard.windowTop;
+});
+```
+
 ## Off a device and on the web
 
 Off a device `metrics` stays at `{ height: 0 }` forever and `dismiss()` does nothing, because there

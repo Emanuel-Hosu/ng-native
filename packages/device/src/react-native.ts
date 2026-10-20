@@ -107,7 +107,7 @@ export interface ReactNative {
   };
   /** `Version` is a string on iOS, `'26.5'`, and the API level, a number, on Android. */
   Platform: { OS: string; Version?: string | number };
-  /** Optional: only the status bar reads it, for `DeviceInfo`'s `isEdgeToEdge` on Android. */
+  /** Optional: the status bar and keyboard read it, for `DeviceInfo`'s `isEdgeToEdge` on Android. */
   TurboModuleRegistry?: { get(name: string): unknown };
   Share: {
     share(
