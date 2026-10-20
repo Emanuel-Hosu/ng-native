@@ -49,7 +49,7 @@ export function audioPlayer(
 export interface Recorder<T> {
   /** The module's own recorder, for `prepareToRecordAsync()`, `record()`, `stop()` and the rest. */
   readonly native: T;
-  /** `getStatus()`, asked every `statusInterval` milliseconds while the component lives. */
+  /** `getStatus()`, asked every `statusInterval` seconds while the component lives. */
   readonly state: Signal<RecorderState>;
 }
 
@@ -60,17 +60,20 @@ export interface Recorder<T> {
  * The recorder is made with `options` merged for the platform, as `useAudioRecorder` makes it, so
  * call `prepareToRecordAsync()` with none. Android reads `isMeteringEnabled` from these alone: a
  * recorder made without it and prepared with it has no `metering`.
+ *
+ * `statusInterval` is in seconds, as `audioPlayer`'s `timeUpdate` is, where
+ * `useAudioRecorderState` takes milliseconds.
  */
 export function audioRecorder(
   options: RecordingOptions,
-  { statusInterval = 500 }: { statusInterval?: number } = {},
+  { statusInterval = 0.5 }: { statusInterval?: number } = {},
 ): Recorder<AudioRecorder> {
   // First, so a call outside an injection context throws before there is a recorder to leak.
   const destroyRef = inject(DestroyRef);
   const expo = expoAudio();
   const native = makeRecorder(expo, forPlatform(options));
   const state = signal(native.getStatus(), { equal: sameStatus });
-  const polling = setInterval(() => state.set(native.getStatus()), statusInterval);
+  const polling = setInterval(() => state.set(native.getStatus()), statusInterval * 1000);
   destroyRef.onDestroy(() => {
     clearInterval(polling);
     releaseRecorder(native);

@@ -123,14 +123,27 @@ export class VoiceNote {
   async start(): Promise<void> {
     if (!(await requestRecordingPermissionsAsync()).granted) return;
     await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-    await this.recorder.native.prepareToRecordAsync();
-    this.recorder.native.record();
+    try {
+      await this.recorder.native.prepareToRecordAsync();
+      this.recorder.native.record();
+    } catch (error) {
+      await this.stopRecordingMode();
+      throw error;
+    }
   }
 
   async stop(): Promise<string | null> {
-    await this.recorder.native.stop();
-    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+    try {
+      await this.recorder.native.stop();
+    } finally {
+      await this.stopRecordingMode();
+    }
     return this.recorder.native.uri;
+  }
+
+  /** Recording mode routes playback to the earpiece on iOS, so it goes as soon as recording does. */
+  private stopRecordingMode(): Promise<void> {
+    return setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
   }
 }
 ```
@@ -139,10 +152,12 @@ It returns a `Recorder<AudioRecorder>`:
 
 - **`native`** - the module's own recorder, for `prepareToRecordAsync()`, `record()`, `pause()`,
   `stop()`, `uri` and the rest. `record()` after `pause()` goes on in the same file.
-- **`state`** - the recorder's `getStatus()`, asked every `statusInterval` milliseconds (500 by
+- **`state`** - the recorder's `getStatus()`, asked every `statusInterval` seconds (0.5 by
   default) while the component lives: `isRecording`, `durationMillis`, `canRecord`, `url`, and
   `metering`, the level in decibels, when the options turn `isMeteringEnabled` on. A change under
-  50 ms of duration or 0.1 dB of level is no change, as in `useAudioRecorderState`.
+  50 ms of duration or 0.1 dB of level is no change, as in `useAudioRecorderState`. The interval
+  is in seconds, as `audioPlayer`'s `timeUpdate` is, where `useAudioRecorderState` takes
+  milliseconds.
 
 The recorder is made with `options` merged for the platform, as `useAudioRecorder` makes it, so
 `prepareToRecordAsync()` takes none. That matters on Android, where the recorder reads

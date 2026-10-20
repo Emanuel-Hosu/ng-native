@@ -449,7 +449,7 @@ describe('owning a recorder', () => {
     const injector = Injector.create({ providers: [] });
     after.push(() => injector.destroy());
     const owned = withModules({ 'expo-audio': expoAudio }, () =>
-      runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 5 })),
+      runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 0.005 })),
     );
     assert.equal(owned.state().isRecording, false, 'the status it had when it was made');
 
@@ -471,7 +471,7 @@ describe('owning a recorder', () => {
     after.push(() => injector.destroy());
     Object.assign(api.status, { isRecording: true, durationMillis: 1000, metering: -20 });
     const owned = withModules({ 'expo-audio': expoAudio }, () =>
-      runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 5 })),
+      runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 0.005 })),
     );
     const first = owned.state();
 
@@ -494,6 +494,55 @@ describe('owning a recorder', () => {
     await sleep(40);
     assert.notEqual(owned.state(), third, 'a new url is a change');
     assert.equal(owned.state().url, 'file:///voice.m4a');
+
+    // pause() turns isRecording off and leaves durationMillis where it was: a pause button
+    // follows the flag alone, and so does each other flag.
+    for (const flag of ['isRecording', 'canRecord', 'mediaServicesDidReset'] as const) {
+      const before = owned.state();
+      api.status[flag] = !api.status[flag];
+      await sleep(40);
+      assert.notEqual(owned.state(), before, `${flag} alone is a change`);
+      assert.equal(owned.state()[flag], api.status[flag]);
+    }
+
+    const metered = owned.state();
+    delete api.status.metering;
+    await sleep(40);
+    assert.notEqual(owned.state(), metered, 'losing the level is a change');
+    assert.equal(owned.state().metering, undefined);
+
+    const unmetered = owned.state();
+    api.status.metering = -20.25;
+    await sleep(40);
+    assert.notEqual(owned.state(), unmetered, 'gaining the level is a change');
+    assert.equal(owned.state().metering, -20.25);
+  });
+
+  it('asks every half second, and leaves metering off, unless it is told otherwise', () => {
+    const { api, expoAudio } = recorder();
+    const injector = Injector.create({ providers: [] });
+    after.push(() => injector.destroy());
+    // Count the poll rather than run it: only its interval is under test.
+    const setInterval = globalThis.setInterval;
+    const intervals: unknown[] = [];
+    globalThis.setInterval = ((_: unknown, ms: unknown) => {
+      intervals.push(ms);
+      return 0;
+    }) as unknown as typeof setInterval;
+    try {
+      const { isMeteringEnabled: _, ...unmetered } = VOICE as Record<string, unknown>;
+      withModules({ 'expo-audio': expoAudio, 'react-native': { Platform: { OS: 'ios' } } }, () =>
+        runInInjectionContext(injector, () => audioRecorder(unmetered as never)),
+      );
+    } finally {
+      globalThis.setInterval = setInterval;
+    }
+    assert.deepEqual(intervals, [500], 'useAudioRecorderState asks every 500 ms');
+    assert.equal(
+      (api.made[0] as { isMeteringEnabled: unknown }).isMeteringEnabled,
+      false,
+      'createRecordingOptions turns metering off when the options leave it out',
+    );
   });
 
   it('makes nothing outside an injection context, where nothing could release it', () => {
