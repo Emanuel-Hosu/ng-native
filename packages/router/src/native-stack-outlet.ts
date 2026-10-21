@@ -207,11 +207,8 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     // Android's back button, and `NativeNavigation.back()`. Declining at the bottom of the stack
     // is deliberate: the outlet this one sits in gets its turn, and when none takes it the
     // platform backgrounds the app, which is what a user expects, rather than the app swallowing
-    // the press and appearing stuck.
-    //
-    // Not yet verified on a device: whether react-native-screens' own Android back handling
-    // (`nativeBackButtonDismissalEnabled`) also pops the screen, which would make one press pop
-    // twice. If a back press ever skips a screen on Android, look here first.
+    // the press and appearing stuck. react-native-screens' Android stack leaves the button to JS;
+    // its header's back arrow comes through `onHeaderBack`.
     const back = this.back;
     const unsubscribeBack = back.handle((from) =>
       from === 'button' && this.refusesButton() ? true : this.goBack(),
@@ -823,6 +820,11 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       (event: { nativeEvent?: { dismissCount?: number } }) =>
         dismissed(event?.nativeEvent?.dismissCount ?? 1),
     );
+    // Android's header back arrow pops the screen natively unless this is off, and then it ignores
+    // `preventNativeDismiss`, as its Back button does. Off, it is sent here instead, and goes the
+    // way Back does: react-navigation's native stack turns it off for the same reason.
+    this.renderer.setProperty(screen, 'nativeBackButtonDismissalEnabled', false);
+    this.renderer.listen(screen, 'headerBackButtonClicked', () => this.onHeaderBack(screen));
     // Every key is a prop `RNSScreen` already declares, spelled the way the codegen spec spells
     // it, so this forwards rather than translates. Set before the screen joins the stack: the
     // native side reads the presentation as it mounts.
@@ -893,6 +895,22 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
   private refusesButton(): boolean {
     if (this.entries.length < 2 || !this.isShowing()) return false;
     return this.refuseBack(this.top!.screen);
+  }
+
+  /**
+   * Android's header back arrow on `screen`: refused where the screen refuses, as Back is, and
+   * otherwise a step back, or the presented page dismissed when the screen is that page's.
+   * react-native-screens sends the arrow of a stack's first screen on the screen the stack sits
+   * in, which holds the top screen's refusal for it.
+   */
+  private onHeaderBack(screen: unknown): void {
+    if (screen === this.presentedPage?.screen) {
+      if (!this.refuseBack(screen)) this.dismissPresentedPage();
+      return;
+    }
+    // A tab behind keeps its top screen, but nobody can tap its arrow: like Back, it is not asked.
+    if (screen !== this.top?.screen || !this.isShowing()) return;
+    if (!this.refuseBack(screen)) this.goBack();
   }
 
   /** Refuses Android's Back for a screen that sets `preventNativeDismiss`, and tells its page. */
