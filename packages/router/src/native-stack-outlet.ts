@@ -46,6 +46,7 @@ import {
   NavigationEnd,
   NavigationError,
   PRIMARY_OUTLET,
+  ROUTER_CONFIGURATION,
   Router,
   createUrlTreeFromSnapshot,
   type Data,
@@ -77,6 +78,8 @@ interface StackEntry {
   unbind: () => void;
   /** How the screen was put on screen, for a push from it to follow. */
   presentation?: ScreenPresentation;
+  /** The history entries putting it on screen added: none where it skipped or replaced one. */
+  entries?: 0 | 1;
   /** The navigation that put this screen on the stack, until that navigation ends. */
   activatedIn?: number;
   /** The navigation that covered this screen, until that navigation ends. */
@@ -94,6 +97,13 @@ interface StackEntry {
  * push inside that stack must see it as a pushed screen, not one to present over.
  */
 const presented = new WeakMap<object, number>();
+
+/**
+ * The history entries, per router, that the navigation in flight took screens off for. A
+ * navigation back to a screen holding a stack of its own drops screens in both stacks, and the
+ * rewind to its entry goes back over all of them, once.
+ */
+const rewinds = new WeakMap<object, { navigation: number; steps: number }>();
 
 /** What every screen needs to fill the stack, the same five keys RNSScreen itself expects. */
 const FILL = { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 } as const;
@@ -161,6 +171,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
    * `RouterOutletContract` directly, which is how its own tests drive it.
    */
   private readonly router = inject(Router, { optional: true });
+  private readonly routerConfig = inject(ROUTER_CONFIGURATION, { optional: true });
   /** For a refused back to reach the screen as native's own report would. */
   private readonly engine = inject(HostEngine, { optional: true });
 
@@ -461,6 +472,7 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       detached: false,
       unbind,
       presentation,
+      entries: this.entriesAdded(),
       activatedIn: navigation,
       inFront,
     });
@@ -566,7 +578,9 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
       });
       this.applicationRef.attachView(ref.hostView);
     } else {
-      for (const above of this.entries.splice(index + 1)) this.drop(above);
+      const above = this.entries.splice(index + 1);
+      for (const entry of above) this.drop(entry);
+      if (above.length) this.rewindAfter(above);
       if (this.currentIntent()?.stack === 'reset') {
         this.supersede(this.entries.slice(0, index), this.navigationId());
       }
@@ -690,8 +704,56 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     this.superseded = { entries, navigation };
   }
 
+  /** The history entries the navigation in flight adds: none where it skips or replaces one. */
+  private entriesAdded(): 0 | 1 {
+    const extras = this.router?.getCurrentNavigation()?.extras;
+    return extras?.skipLocationChange || extras?.replaceUrl ? 0 : 1;
+  }
+
+  /**
+   * A navigation the history did not drive went back to a screen kept further down, taking
+   * `dropped` screens off: a back has already moved the history, and a navigation that skips the
+   * location change leaves it where it is.
+   */
+  private rewindAfter(dropped: readonly StackEntry[]): void {
+    const navigation = this.router?.getCurrentNavigation();
+    if (!navigation || navigation.trigger === 'popstate' || navigation.extras.skipLocationChange) {
+      return;
+    }
+    // A router that resolves a cancelled navigation by computing how far to go in history counts
+    // its own entries, and a rewind it did not make would put that count out of step.
+    if (this.routerConfig?.canceledNavigationResolution === 'computed') return;
+    // A screen restored from another outlet has no count here, and is taken to have added one.
+    const added = dropped.reduce((total, entry) => total + (entry.entries ?? 1), 0);
+    const pending = rewinds.get(this.router!);
+    if (pending?.navigation === navigation.id) pending.steps += added;
+    else
+      rewinds.set(this.router!, { navigation: navigation.id, steps: added + this.entriesAdded() });
+  }
+
+  /**
+   * Back to the kept screen's own entry, when it is the one that far back, with no popstate: the
+   * router is there already. The entry keeps its state, the screen's presentation with it, and
+   * takes the navigation's id, as the router writes one into the entry a back reaches. A stack in
+   * a tab whose history went through another tab has that tab's entry there, and is left as it is.
+   */
+  private rewind(navigation: number, steps: number): void {
+    const history = this.history;
+    if (!(history instanceof NativePlatformLocation)) return;
+    if (this.historyUrl(-steps) !== this.router!.url) return;
+    history.ɵrewind(steps);
+    const state = history.getState();
+    const own = state && typeof state === 'object' ? state : {};
+    history.replaceState({ ...own, navigationId: navigation }, '', history.ɵurlAt(0)!);
+  }
+
   /** A navigation succeeded: what it superseded goes, and what it did is no longer undoable. */
   private settle(navigation: number): void {
+    const pending = this.router && rewinds.get(this.router);
+    if (pending?.navigation === navigation) {
+      rewinds.delete(this.router!);
+      this.rewind(navigation, pending.steps);
+    }
     if (this.superseded?.navigation === navigation) {
       for (const entry of this.superseded.entries) this.remove(entry);
       this.superseded = null;
