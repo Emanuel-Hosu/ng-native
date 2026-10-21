@@ -89,7 +89,7 @@ const NONE: StatusBarSource = {
 export function statusBarSource(): StatusBarSource {
   const native = reactNative();
   if (!native) return NONE;
-  return sharedBySource(native, () => nativeSource(native));
+  return sharedBySource(statusBarSource, native, () => nativeSource(native));
 }
 
 function nativeSource(native: NonNullable<ReturnType<typeof reactNative>>): StatusBarSource {
@@ -98,7 +98,10 @@ function nativeSource(native: NonNullable<ReturnType<typeof reactNative>>): Stat
   // Android 16 draws an app targeting SDK 35 or later edge-to-edge whatever its theme says. Before
   // it, a theme can opt out, and React Native's own answer is the flag its status bar module
   // checks. That answer is not enough on its own: Expo Go on Android 16 reports false.
-  const edgeToEdge = android && (Number(native.Platform.Version) >= 36 || edgeToEdgeFlag(native));
+  // React Native 0.88 draws every Android app edge-to-edge, and removed both setters with it.
+  const settable = typeof StatusBar.setBackgroundColor === 'function';
+  const edgeToEdge =
+    android && (!settable || Number(native.Platform.Version) >= 36 || edgeToEdgeFlag(native));
   const warned = new Set<string>();
   return {
     setStyle: (style, animated) => StatusBar.setBarStyle(BAR_STYLES[style], animated),
@@ -106,12 +109,12 @@ function nativeSource(native: NonNullable<ReturnType<typeof reactNative>>): Stat
     setBackgroundColor: (color, animated) => {
       if (!android) return;
       if (edgeToEdge) warnNoEffect('backgroundColor', warned);
-      StatusBar.setBackgroundColor(color, animated);
+      StatusBar.setBackgroundColor?.(color, animated);
     },
     setTranslucent: (translucent) => {
       if (!android) return;
       if (edgeToEdge) warnNoEffect('translucent', warned);
-      StatusBar.setTranslucent(translucent);
+      StatusBar.setTranslucent?.(translucent);
     },
     get height() {
       return StatusBar.currentHeight;
@@ -155,7 +158,11 @@ export class StatusBar {
   /** This app, among the apps claiming the bar: its scheme is what an `auto` style it claims follows. */
   private readonly owner: Owner = { scheme: inject(ColorScheme) };
   /** Every app's claims on this bar: the window is the runtime's, not an app's. */
-  private readonly window = sharedBySource(this.source, () => new StatusBarWindow(this.source));
+  private readonly window = sharedBySource(
+    StatusBarWindow,
+    this.source,
+    () => new StatusBarWindow(this.source),
+  );
 
   /** What is actually showing: every claim in order, later ones winning per property. */
   readonly state: Signal<StatusBarState> = this.window.state;

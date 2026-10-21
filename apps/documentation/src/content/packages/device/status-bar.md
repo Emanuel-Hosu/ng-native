@@ -11,9 +11,10 @@ it back its own claim when it closes, and nothing else remembers what that was.
 
 ```ts
 import { Component, DestroyRef, inject } from '@angular/core';
+import { View } from '@ng-native/components';
 import { StatusBar } from '@ng-native/device';
 
-@Component({ selector: 'app-photo-viewer', template: `<view />` })
+@Component({ selector: 'app-photo-viewer', imports: [View], template: `<view />` })
 export class PhotoViewer {
   constructor() {
     const drop = inject(StatusBar).push({ style: 'light', hidden: true });
@@ -41,8 +42,10 @@ It also takes `backgroundColor` and `translucent`, which are deprecated and do n
 Android-only, and under [Android edge-to-edge](/guide/android-edge-to-edge) the app always draws
 under the bar, which has no background of its own: React Native's Android module ignores both. In
 development the first use of each logs a warning on Android, unless the app has opted out of
-edge-to-edge, where both still work. On iOS neither is sent, so React
-Native's "only available on Android" warning no longer shows. To color the area behind the bar,
+edge-to-edge, where both still work up to React Native 0.86 (Expo SDK 57). React Native 0.88 (Expo
+SDK 58) draws every Android app edge-to-edge and has neither, so there both do nothing and warn
+whatever the theme. On iOS neither is sent, so React Native's "only available on Android" warning
+no longer shows. To color the area behind the bar,
 color the view under it.
 
 ## Following the color scheme
