@@ -148,9 +148,9 @@ showing in front. The error reaches the app's `ErrorHandler` as well as the navi
 
 A page's host element is its screen, so a page can refuse to be swiped away while it holds
 unsaved changes, and hear the attempt to ask about them. On Android the same holds for the Back
-button: while `preventNativeDismiss` is true, Back leaves the screen in place and fires
-`(nativeDismissCancelled)`. `NativeNavigation.back()` still goes back, which is how the page leaves
-once the user has confirmed:
+button and for the header's back arrow: while `preventNativeDismiss` is true, either leaves the
+screen in place and fires `(nativeDismissCancelled)`. `NativeNavigation.back()` still goes back,
+which is how the page leaves once the user has confirmed:
 
 ```ts
 @Component({

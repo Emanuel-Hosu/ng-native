@@ -311,6 +311,8 @@ export const DIRECT_EVENTS: ReadonlySet<string> = new Set([
   'topWillDisappear',
   'topDisappear',
   'topHeaderHeightChange',
+  // Sent on the screen whose arrow it is: one bubbling to the screen a stack sits in pops that too.
+  'topHeaderBackButtonClicked',
   'topTransitionProgress',
   'topFinishTransitioning',
   // The tabs host reports its own selection, and only the host it happened in wants to know.
@@ -451,6 +453,7 @@ const VIEW_EVENT_OPT_IN_PROPS: Record<string, Record<string, string>> = {
     topContentSizeChange: 'onContentSizeChange',
     topScroll: 'onScroll',
     topKeyPress: 'onKeyPress',
+    topSelectionChange: 'onSelectionChange',
   },
 };
 
