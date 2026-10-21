@@ -25,7 +25,7 @@ export function dismissKeyboardOnTap(
 
   /** A keyboard is up for an input, and the tap is not on a text input. */
   const tapDismisses = (target: EngineNode): boolean => {
-    if (!engine.focused) return false;
+    if (!engine.focusedField) return false;
     for (let at: EngineNode | null = target; at; at = at.parent) {
       if (TEXT_INPUTS.has(viewNameOf(at))) return false;
     }
@@ -46,8 +46,7 @@ export function dismissKeyboardOnTap(
     onResponderRelease: () => {
       if (!dismissing) return;
       dismissing = false;
-      const focused = engine.focused;
-      if (focused) engine.dispatchCommand(focused, 'blur');
+      engine.blurFocused();
     },
     onResponderTerminate: () => {
       dismissing = false;
