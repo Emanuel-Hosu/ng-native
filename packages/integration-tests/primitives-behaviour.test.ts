@@ -232,7 +232,7 @@ describe('scroll view keyboard policy', () => {
     assert.deepEqual(fabric.commands, []);
   });
 
-  it('leaves the keyboard up for a tap on another field, which takes the focus', async () => {
+  it('leaves the keyboard up for a tap on another field', async () => {
     // React Native's ScrollView lets a tap on any text input through, not only on the focused one:
     // moving from one field of a form to the next keeps the keyboard up.
     const { fabric } = await boot('KeyboardTaps');

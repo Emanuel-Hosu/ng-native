@@ -24,13 +24,8 @@ export function dismissKeyboardOnTap(
   let dismissing = false;
 
   /** A keyboard is up for an input, and the tap is not on a text input. */
-  const tapDismisses = (target: EngineNode): boolean => {
-    if (!engine.focusedField) return false;
-    for (let at: EngineNode | null = target; at; at = at.parent) {
-      if (TEXT_INPUTS.has(viewNameOf(at))) return false;
-    }
-    return true;
-  };
+  const tapDismisses = (target: EngineNode): boolean =>
+    engine.focusedField !== null && !TEXT_INPUTS.has(viewNameOf(target));
 
   // RN's `_observedScrollSinceBecomingResponder`: a touch that scrolled was a drag, and a drag
   // through the content is reading it, so its release leaves the keyboard up.
