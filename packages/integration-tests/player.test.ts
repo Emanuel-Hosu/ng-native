@@ -342,7 +342,7 @@ function recorder() {
       return api;
     }
   }
-  return { api, expoAudio: { AudioModule: { AudioRecorder } } };
+  return { api, made, expoAudio: { AudioModule: { AudioRecorder } } };
 }
 
 /** expo-audio on the web: AudioModule is a plain module with AudioRecorderWeb and no release(). */
@@ -422,6 +422,35 @@ describe('owning a recorder', () => {
     }
   });
 
+  it("lets the platform's options win over the common ones, as useAudioRecorder does", () => {
+    // RecordingPresets.LOW_QUALITY records .3gp on Android over a common .m4a.
+    const options = {
+      extension: '.m4a',
+      sampleRate: 44100,
+      numberOfChannels: 2,
+      bitRate: 64000,
+      android: { extension: '.3gp', sampleRate: 22050 },
+      ios: { extension: '.caf', numberOfChannels: 1 },
+      web: { bitRate: 32000 },
+    } as never;
+    for (const [os, own] of [
+      ['android', { extension: '.3gp', sampleRate: 22050 }],
+      ['ios', { extension: '.caf', numberOfChannels: 1 }],
+      ['web', { bitRate: 32000 }],
+    ] as const) {
+      const { made, expoAudio } = os === 'web' ? webRecorder() : recorder();
+      const injector = Injector.create({ providers: [] });
+      after.push(() => injector.destroy());
+      withModules({ 'expo-audio': expoAudio, 'react-native': { Platform: { OS: os } } }, () =>
+        runInInjectionContext(injector, () => audioRecorder(options)),
+      );
+      const made0 = made[0] as Record<string, unknown>;
+      for (const [key, value] of Object.entries(own))
+        assert.equal(made0[key], value, `${key} on ${os}`);
+      withModules({ 'react-native': { Platform: { OS: os } } }, () => after.pop()!());
+    }
+  });
+
   it('makes the web recorder on the web, and clears its timeouts with the component', () => {
     const { api, made, expoAudio } = webRecorder();
     const injector = Injector.create({ providers: [] });
@@ -469,25 +498,26 @@ describe('owning a recorder', () => {
     const { api, expoAudio } = recorder();
     const injector = Injector.create({ providers: [] });
     after.push(() => injector.destroy());
-    Object.assign(api.status, { isRecording: true, durationMillis: 1000, metering: -20 });
+    // Levels a binary float steps exactly: 0 to -0.1 is 0.1 dB to the bit.
+    Object.assign(api.status, { isRecording: true, durationMillis: 1000, metering: 0 });
     const owned = withModules({ 'expo-audio': expoAudio }, () =>
       runInInjectionContext(injector, () => audioRecorder(VOICE, { statusInterval: 0.005 })),
     );
     const first = owned.state();
 
-    Object.assign(api.status, { durationMillis: 1050, metering: -20.05 });
+    Object.assign(api.status, { durationMillis: 1050, metering: -0.1 });
     await sleep(40);
-    assert.equal(owned.state(), first, '50 ms and under 0.1 dB is no change');
+    assert.equal(owned.state(), first, '50 ms and 0.1 dB is no change');
 
     api.status.durationMillis = 1051;
     await sleep(40);
     assert.equal(owned.state().durationMillis, 1051, 'past 50 ms is a change');
 
     const second = owned.state();
-    api.status.metering = -20.25;
+    api.status.metering = -0.21;
     await sleep(40);
     assert.notEqual(owned.state(), second, 'past 0.1 dB is a change');
-    assert.equal(owned.state().metering, -20.25);
+    assert.equal(owned.state().metering, -0.21);
 
     const third = owned.state();
     api.status.url = 'file:///voice.m4a';
