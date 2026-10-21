@@ -207,11 +207,8 @@ export class NativeStackOutlet implements RouterOutletContract, OnInit {
     // Android's back button, and `NativeNavigation.back()`. Declining at the bottom of the stack
     // is deliberate: the outlet this one sits in gets its turn, and when none takes it the
     // platform backgrounds the app, which is what a user expects, rather than the app swallowing
-    // the press and appearing stuck.
-    //
-    // Not yet verified on a device: whether react-native-screens' own Android back handling
-    // (`nativeBackButtonDismissalEnabled`) also pops the screen, which would make one press pop
-    // twice. If a back press ever skips a screen on Android, look here first.
+    // the press and appearing stuck. react-native-screens' Android stack leaves the button to JS;
+    // its header's back arrow comes through `onHeaderBack`.
     const back = this.back;
     const unsubscribeBack = back.handle((from) =>
       from === 'button' && this.refusesButton() ? true : this.goBack(),

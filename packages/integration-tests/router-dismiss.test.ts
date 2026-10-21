@@ -126,6 +126,13 @@ describe("Android's Back on a screen that refuses a native dismissal", () => {
     assert.equal(page.attempts(), 1);
   });
 
+  it('leaves the screen on top in place for the arrow of a screen under it', async () => {
+    const { screens } = await presentEditor();
+    await fireEvent(screens()[0]!, 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(screens().length, 2, 'the sheet is still there');
+  });
+
   it('still lets the page leave through NativeNavigation.back()', async () => {
     const { nav, screens, page } = await presentEditor();
     page.dirty.set(true);
@@ -248,6 +255,18 @@ describe('a page inside a presented stack that refuses a native dismissal', () =
     for (let turn = 0; turn < 5; turn++) await settle();
     assert.equal(screens().length, before, 'the sheet is still there');
     assert.equal(page.attempts(), 1);
+  });
+
+  it('takes one screen off for the header back arrow of a screen pushed inside the stack', async () => {
+    const { nav, screens, sheet } = await presentStack();
+    await nav.push('/compose/more');
+    for (let turn = 0; turn < 5; turn++) await settle();
+    const before = screens().length;
+    // The arrow is sent on the pushed screen, which sits inside the sheet.
+    await fireEvent(screens().at(-1)!, 'headerBackButtonClicked', {});
+    for (let turn = 0; turn < 5; turn++) await settle();
+    assert.equal(screens().length, before - 1, 'only the pushed screen went');
+    assert.ok(sheet(), 'the sheet is still there');
   });
 
   it("leaves the sheet's own refusal in place when the page stops refusing", async () => {
