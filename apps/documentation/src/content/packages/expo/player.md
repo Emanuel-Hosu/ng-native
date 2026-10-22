@@ -117,7 +117,7 @@ owned by the current component, released when it is destroyed, with its status a
 it in an injection context, as the players:
 
 ```ts
-import { Component } from '@angular/core';
+import { Component, DestroyRef, ErrorHandler, inject } from '@angular/core';
 import { RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from 'expo-audio';
 import { audioRecorder } from '@ng-native/expo/audio';
 
@@ -127,9 +127,20 @@ import { audioRecorder } from '@ng-native/expo/audio';
 })
 export class VoiceNote {
   protected readonly recorder = audioRecorder(RecordingPresets.HIGH_QUALITY);
+  private readonly errorHandler = inject(ErrorHandler);
+  private recordingMode = false;
+
+  constructor() {
+    // Destroyed while recording, stop() never runs, so the mode goes here.
+    inject(DestroyRef).onDestroy(() => {
+      if (!this.recordingMode) return;
+      this.stopRecordingMode().catch((error: unknown) => this.errorHandler.handleError(error));
+    });
+  }
 
   async start(): Promise<void> {
     if (!(await requestRecordingPermissionsAsync()).granted) return;
+    this.recordingMode = true;
     await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
     try {
       await this.recorder.native.prepareToRecordAsync();
@@ -151,6 +162,7 @@ export class VoiceNote {
 
   /** Recording mode routes playback to the earpiece on iOS, so it goes as soon as recording does. */
   private stopRecordingMode(): Promise<void> {
+    this.recordingMode = false;
     return setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
   }
 }
@@ -172,7 +184,9 @@ The recorder is made with `options` merged for the platform, as `useAudioRecorde
 `isMeteringEnabled` only from the options it was made with: one prepared with it but made without
 it reports no `metering`. Android also measures the peak level where iOS measures the average, so
 the same voice reads louder there. Permissions and the audio mode are `expo-audio`'s own plain
-functions, as above.
+functions, as above. Releasing a recorder stops its recording but leaves the audio mode as it
+was, so a component that sets recording mode sets it back when it is destroyed, as `VoiceNote`
+does.
 
 ## The `<expo-video>` view
 
