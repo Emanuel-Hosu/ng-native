@@ -4,21 +4,23 @@ import {
   DOCUMENT,
   Injector,
   RendererFactory2,
+  effect,
   inject,
   makeEnvironmentProviders,
   provideEnvironmentInitializer,
   type EnvironmentProviders,
 } from '@angular/core';
 import { Engine, extendNodes } from '@ng-native/fabric';
-import { DeepLinks, NATIVE_HISTORY } from '@ng-native/device';
+import { DeepLinks, Keyboard, NATIVE_HISTORY } from '@ng-native/device';
 import { extendRenderer } from '@ng-native/platform';
 import { documentFor } from './document.ts';
 import { loadFramesWith, type FrameLoader } from './frame.ts';
 import { registerFrameViews, showFramesAs, type FrameMode } from './frame-view.ts';
 import { StillLocation } from './location.ts';
 import { detectedRoot, installLocation, openPage } from './page-address.ts';
-import { webListen } from './listen.ts';
+import { touchTarget, webListen } from './listen.ts';
 import { registerCanvas } from './canvas.ts';
+import { registerImage } from './image.ts';
 import { attributeMembers } from './attribute-members.ts';
 import { characterDataMembers } from './character-data.ts';
 import { forgetCommits } from './commit-watch.ts';
@@ -38,6 +40,7 @@ import { selectorMembers } from './selector-members.ts';
 import { registerSvg } from './svg.ts';
 import { treeMembers } from './tree-members.ts';
 import { installWindow, windowOf } from './window.ts';
+import { keyboardMoved, windowHeight } from './window-size.ts';
 
 /** How many apps in the process asked for it: nodes share one prototype, and globals are global. */
 let apps = 0;
@@ -79,6 +82,8 @@ function install(engine: Engine): void {
     // A canvas, drawn by the same views, and the globals its drawing is asked about by: see
     // `canvas.ts`.
     registerCanvas(),
+    // An image, as the platform's image view: see `image.ts`.
+    registerImage(),
     // An iframe's native web view, and Angular's `Location` where no router gives one: see
     // `frame-view.ts` and `page-address.ts`.
     registerFrameViews(),
@@ -197,6 +202,13 @@ export function provideWebCompat(options: WebCompatOptions = {}): EnvironmentPro
         inject(RendererFactory2).createRenderer(null, null),
       );
       const leaveWindow = windowOf(engine);
+      // The window ends at the top of the keyboard while it is up: see `window-size.ts`. Where the
+      // keyboard is going, which it is said to be as it starts to move. Ended with the app.
+      const keyboard = inject(Keyboard);
+      effect(() => {
+        const { height, screenY } = keyboard.metrics();
+        keyboardMoved(engine, height > 0 ? (screenY ?? windowHeight(engine) - height) : undefined);
+      });
       // A field's blur is told at once, and native's answer to it passed over: see `element-focus.ts`.
       const heedBlurs = passOverToldBlurs(engine);
       const unwatchStyles = watchStyles(engine);
@@ -213,7 +225,13 @@ export function provideWebCompat(options: WebCompatOptions = {}): EnvironmentPro
       });
       // Where a file input's click finds the system's file picker: see `file-input.ts`.
       const forgetPicker = pickWith(engine, injector);
+      // An element a library moves while a finger is on it keeps its touch: see `Engine`.
+      engine.holdMovesUnderFinger(true);
+      // A touch on a drawing is on the shape a browser finds under the finger: see `listen.ts`.
+      engine.setTouchTarget(touchTarget(engine));
       inject(DestroyRef).onDestroy(() => {
+        engine.holdMovesUnderFinger(false);
+        engine.setTouchTarget(null);
         forgetPicker();
         closePage();
         forgetFrameMode();

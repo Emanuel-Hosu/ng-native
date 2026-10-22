@@ -221,6 +221,44 @@ describe('@ng-native/web-compat svg by element name', () => {
   });
 });
 
+/** A drawing with a link round some of its shapes, as the SVG logo has. */
+@Component({
+  selector: 'x-linked',
+  template: `
+    <svg viewBox="0 0 100 100" width="80" height="80">
+      <a testID="link" href="https://www.w3.org/Graphics/SVG/">
+        <rect testID="inside" width="100" height="100" fill="#ff9900" />
+      </a>
+    </svg>
+  `,
+})
+class Linked {}
+
+describe('@ng-native/web-compat svg link', () => {
+  it('draws a link in a drawing as a group of what it holds, as an <a> by its name', async () => {
+    const app = await render(Linked, { providers: [provideWebCompat()] });
+    await settle();
+    // A drawing holds nothing but its own views: a plain view in it draws nothing at all.
+    assert.equal(screen.getByTestId('link').viewName, 'RNSVGGroup');
+    assert.equal(screen.getByTestId('inside').viewName, 'RNSVGRect');
+    const document = (globalThis as unknown as { document: Dom }).document;
+    assert.equal(document.querySelector('svg a')?.localName, 'a');
+    // One markup builds, as a picture fetched for an <img> is.
+    const svg = document.querySelector('svg');
+    svg.innerHTML = '<a href="#b"><circle r="5" /></a>';
+    await settle();
+    assert.equal(svg.firstChild.localName, 'a');
+    const drawing = (nodes: readonly FakeFabricNode[]): FakeFabricNode | undefined =>
+      nodes.find((node) => node.viewName === 'RNSVGSvgView') ??
+      nodes.map((node) => drawing(node.children)).find(Boolean);
+    const [link] = drawing(app.fabric.committed)!.children;
+    assert.deepEqual(
+      [link!.viewName, link!.children.map((child) => child.viewName)],
+      ['RNSVGGroup', ['RNSVGCircle']],
+    );
+  });
+});
+
 describe('@ng-native/web-compat svg attributes in a selector', () => {
   /** A page with a sheet a script writes into it, and a box to put a drawing in. */
   const page = async (css: string) => {
@@ -316,6 +354,17 @@ describe('@ng-native/web-compat svg attributes in a selector', () => {
 })
 class ForeignLabel {}
 
+@Component({
+  selector: 'x-foreign-bare',
+  template: `
+    <svg viewBox="0 0 200 100">
+      <foreignObject testID="bare"><p>Germany</p></foreignObject>
+      <foreignObject testID="partial" x="10" width="50%"><p>Spain</p></foreignObject>
+    </svg>
+  `,
+})
+class ForeignBare {}
+
 describe('@ng-native/web-compat svg foreignObject', () => {
   it('draws the HTML it holds where it says in the drawing, as a card label is', async () => {
     await render(ForeignLabel, { providers: [provideWebCompat()] });
@@ -325,6 +374,25 @@ describe('@ng-native/web-compat svg foreignObject', () => {
     const { x, y, width, height } = foreign.props;
     assert.deepEqual([x, y, width, height].map(String), ['10', '20', '120', '40']);
     assert.ok(screen.getByText('Germany'));
+  });
+});
+
+describe('@ng-native/web-compat svg foreignObject area', () => {
+  it('is the whole drawing where the markup says none, and each side it does not say', async () => {
+    await render(ForeignBare, { providers: [provideWebCompat()] });
+    await settle();
+    const area = (id: string) => {
+      const { x, y, width, height } = screen.getByTestId(id).props;
+      return [x, y, width, height].map(String);
+    };
+    assert.deepEqual(area('bare'), ['0%', '0%', '100%', '100%']);
+    assert.deepEqual(area('partial'), ['10', '0%', '50%', '100%']);
+  });
+
+  it('is nothing the package gave it in an app that did not ask for the package', async () => {
+    await render(ForeignBare);
+    await settle();
+    assert.equal(screen.getByTestId('bare').props['width'], undefined);
   });
 });
 

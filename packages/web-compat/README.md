@@ -12,9 +12,10 @@ Experimental and partial. It has:
   with `dispatchEvent`.
 - Markup: `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `setHTML` and its kin, and a
   `<template>`'s `content`, parsed as a browser parses HTML.
-- The properties HTML reflects attributes as (`hidden`, `title`, `dir`, `tabIndex`, `type`,
-  ARIA's and the rest), a table's rows and cells, and the element interfaces, `HTMLInputElement`
-  and the rest, for `instanceof`.
+- The properties HTML reflects attributes as (`hidden`, `title`, `dir`, `tabIndex`, `draggable`,
+  `type`, ARIA's and the rest), `isContentEditable` from `contenteditable`, a
+  table's rows and cells, and the element interfaces, `HTMLInputElement` and the rest, for
+  `instanceof`.
 - The tree: live `childNodes` and `children`, the nodes around one, `appendChild`,
   `insertBefore`, `removeChild`, `replaceChild`, `append`, `prepend`, `replaceChildren`,
   `before`, `after`, `replaceWith`, `insertAdjacentElement`, `moveBefore`, `cloneNode`,
@@ -37,13 +38,26 @@ Experimental and partial. It has:
   drawn, a `hidden` element drawn as `display: none`, and `CSS.escape` and `CSS.supports`.
 - Geometry: `getBoundingClientRect` and `getClientRects` as `DOMRect`s, `offsetParent` and the
   `offset`, `client` and `scroll` sizes and positions, each read from where native last laid the
-  element out with what is pending committed first.
+  element out with what is pending committed first. `document.elementFromPoint` and
+  `elementsFromPoint` answer the element drawn at a point, passing over `pointer-events: none`,
+  `display: none` and what a box that clips its overflow does not draw.
 - Scrolling: an element whose style says `overflow: auto` or `scroll` scrolls what overflows it,
   with `scrollTop` and `scrollLeft` to read and write, `scroll`, `scrollTo`, `scrollBy` and
   `scrollIntoView`. The window does not scroll, and `document.scrollingElement` is its root.
 - The window: `screen`, `visualViewport`, `matchMedia` with a `change` listener, and
   `ResizeObserver` and `IntersectionObserver`, with a root, a margin and thresholds. An app that
   observes nothing pays nothing for them.
+- `navigator.userAgent` naming a phone of the platform the app runs on, and `maxTouchPoints`, where
+  the runtime's own `navigator` says no browser: a library picks touch handling from them.
+- Stand-ins for what a library asks of the window: `localStorage` and `sessionStorage` held in
+  memory for as long as the app is up, `getSelection()` with nothing selected, `open()` returning
+  `null`, and a `ShadowRoot` that nothing is an instance of.
+- The window starts under the navigation header of the screen in sight and ends at the top of the
+  keyboard while it is up, as a browser on a phone ends its window there: `innerHeight`,
+  `visualViewport` and where an element or a touch is are read from there, `resize` is sent as
+  either moves, and `document.body`, where an overlay goes, covers just that part of the screen,
+  with what is `fixed` in it fixed to it. On Android, which draws an app under its system bars,
+  the window is as tall as the app is drawn. `screen` and `matchMedia` read the whole screen.
 - `MutationObserver`, with `childList`, `attributes`, `characterData`, `subtree` and old values.
 - A `document` that creates engine nodes and fragments, with a `body` that draws over the screen
   for overlays, a doctype, `createElementNS`, `createTreeWalker` and `createNodeIterator`, and a
@@ -51,7 +65,10 @@ Experimental and partial. It has:
 - Events: `MouseEvent`, `PointerEvent`, `KeyboardEvent`, `FocusEvent`, `TouchEvent` and the
   other kinds, `document.createEvent` with each kind's `init*Event`, `window.event`, and handler
   properties, `onclick` to `onload`. A press is a `PointerEvent`, and a touch is the mouse going
-  down and up as a phone's browser has it. A held finger is a `contextmenu`.
+  down and up as a phone's browser has it. A held finger is a `contextmenu`. An element moved to
+  another parent, or taken out, while a finger is on it is moved in the document at once and
+  stays where native has it until the finger lifts, so the touch goes on, as a drag that puts its
+  element on the body as it begins needs.
 - What a click does: a checkbox or a radio is checked and says `input` and `change`, a button
   submits or resets its form, and a label clicks or focuses its control, for a press, a click a
   script sends and `element.click()`.
@@ -65,12 +82,23 @@ Experimental and partial. It has:
 - SVG: an `<svg>` a template writes, markup builds or a script makes with `createElementNS` is
   drawn by react-native-svg's native views, the ones `@ng-native/icons` draws with: shapes,
   groups, texts and their spans, a text along a path, gradients and their stops, clips, masks,
-  markers, patterns, a drop shadow and HTML in a `foreignObject`. Its elements have SVG's names
+  markers, patterns, a drop shadow and HTML in a `foreignObject`, the whole drawing where it gives
+  no area. Its elements have SVG's names
   and namespace, `className` as an object with `baseVal`, `getBBox`, `getComputedTextLength`,
   `ownerSVGElement` and `createSVGRect`, and a paint that names a token is the token's colour.
-  `@ng-native/icons` is a peer dependency for this. The app installs `react-native-svg` for the
+  A shape with a listener for a touch, or in a group or a drawing with one, takes the touch; a
+  touch native finds no shape for, as between the letters of a text, is on the text, rectangle,
+  circle or ellipse whose box is under the finger; and a touch on a shape sends `mouseover` and
+  `mouseenter`, and `mouseout` and `mouseleave` for the shape before, as a phone's browser does,
+  so a chart shows a series' tooltip. `@ng-native/icons` is a peer dependency for this. The app
+  installs `react-native-svg` for the
   native views; none of its JavaScript is imported, and without it a drawing shows nothing, as
-  an icon does.
+  an icon does. A `<path>` of thousands of straight segments that go one way across, a chart's
+  line series, is drawn thinned to the lowest and highest point of each point-wide column, as
+  react-native-svg on iOS takes seconds over a stroke that long; `getAttribute('d')` and
+  `getBBox` read the whole path, and a canvas's long line is thinned too. A curve, a relative
+  command, a path that turns back so often that no run is long, or one under a rotation is drawn
+  as written.
 - Canvas: a `<canvas>`'s 2D context draws with the same native views, so it too shows nothing
   where the app has not installed `react-native-svg`. Its `width` and `height` are the grid it
   draws on, and the shapes drawn, not its text, read back by `getImageData`, draw on another
@@ -78,10 +106,18 @@ Experimental and partial. It has:
   `toBlob` hands its callback null, as its `Blob` holds no bytes; `toDataURL` has the PNG there.
   There is no bitmap: a clear of part of it, and a way of laying a drawing over what is there
   other than `source-over` (and `copy` where nothing clips it), change only the pixels read
-  back. An `<img>` drawn on one draws nothing.
+  back. An `<img>` draws on one once its picture has loaded, and is not in the pixels read back.
+- `<img>` as the platform's image view, from its `src` resolved against the page's address, with
+  its `alt` said to a screen reader, its `width` and `height` as its size, the size of its
+  picture where nothing else sizes it, `naturalWidth`, `naturalHeight`, `complete`, `load` and
+  `error`, and `object-fit` as how the picture fits its box. A picture that is an SVG is fetched
+  and drawn as an `<svg>` of its shapes alone.
 - A `<button>` and an `<a>` with their roles, each taking a press with no listener (`:active`
   while held) and marked `data-hover` while a pointer is over it, a disabled one announced as
   disabled, and a table's and a form's elements as views.
+- A table laid out in columns: a cell as wide as the columns it is across (`colspan`), one down
+  several rows (`rowspan`), the columns sharing the table's width by what their cells hold or
+  the widths the cells say, and `table-layout: fixed` giving them one width.
 - The page's address: `document.URL`, `baseURI` and `<base href>`, `window.location`, a link's
   `href` and the parts of its URL, the other URLs an element's attributes say, resolved against
   it, and `:target`.
@@ -89,16 +125,21 @@ Experimental and partial. It has:
   `postMessage` both ways, and `window.frames`.
 - A `click` listener that hears a press.
 - Forms: an `<input>` and a `<textarea>` are the platform's text field, with `value` and
-  `defaultValue`, its keys, `change` once an edit ends, the keyboard its `type` and `inputmode`
-  ask for, and `readOnly` and `disabled` making it one that cannot be typed into. A `<select>`
-  shows its chosen `<option>` and opens a list of them when it or its label is pressed. A control
-  has `checked`, `validity` with `checkValidity()`, `reportValidity()` and `setCustomValidity()`,
-  `selectionStart` and `setSelectionRange()`, and its `form`, which has `elements`,
-  `requestSubmit()` and `reset()`. A disabled `<fieldset>` disables what is in it, a file input's
-  `click()` opens the system's file picker through `expo-document-picker`, and `:valid`, `:checked`,
-  `:placeholder-shown` and the rest match. An app opens a picker of its own instead by providing
-  `FILE_PICKER`, an object with the `getDocumentAsync()` of `expo-document-picker` (its type is
-  `FilePicker`).
+  `defaultValue`, its keys, `change` once an edit ends, the keyboard its `type` and `inputmode` ask
+  for, twenty characters wide until its `size` says otherwise, a `caret-color` in its `style` as its
+  selection colour (`transparent` hides the caret), and `readOnly` and `disabled` making it one that
+  cannot be typed into. An `<input type="range">` keeps its value within its `min` and `max` on its
+  `step`, has `valueAsNumber`, `stepUp()` and `stepDown()`, and moves under a finger dragged across
+  it, saying `input` as it moves and `change` as the finger lifts. A `<select>` shows its chosen
+  `<option>` and opens a list of them when it or its label is pressed. A control has `checked`,
+  `validity` with `checkValidity()`, `reportValidity()` and `setCustomValidity()`, `selectionStart`
+  and `setSelectionRange()`, `select()` followed by `document.execCommand('copy')` writing the text
+  to the clipboard through `expo-clipboard`, and its `form`, which has `elements`, `requestSubmit()`
+  and `reset()`. A disabled `<fieldset>` disables what is in it, its `<legend>` sits on its top
+  border, a file input's `click()` opens the system's file picker through `expo-document-picker`,
+  and `:valid`, `:checked`, `:placeholder-shown` and the rest match. An app opens a picker of its
+  own instead by providing `FILE_PICKER`, an object with the `getDocumentAsync()` of
+  `expo-document-picker` (its type is `FilePicker`).
 
 The rest of the DOM is not part of it yet.
 
