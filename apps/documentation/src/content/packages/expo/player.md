@@ -141,8 +141,8 @@ export class VoiceNote {
   async start(): Promise<void> {
     if (!(await requestRecordingPermissionsAsync()).granted) return;
     this.recordingMode = true;
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
     try {
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await this.recorder.native.prepareToRecordAsync();
       this.recorder.native.record();
     } catch (error) {
@@ -173,9 +173,10 @@ It returns a `Recorder<AudioRecorder>`:
 - **`native`** - the module's own recorder, for `prepareToRecordAsync()`, `record()`, `pause()`,
   `stop()`, `uri` and the rest. `record()` after `pause()` goes on in the same file.
 - **`state`** - the recorder's `getStatus()`, asked every `statusInterval` seconds (0.5 by
-  default) while the component lives: `isRecording`, `durationMillis`, `canRecord`, `url`, and
-  `metering`, the level in decibels, when the options turn `isMeteringEnabled` on. A change under
-  50 ms of duration or 0.1 dB of level is no change, as in `useAudioRecorderState`. The interval
+  default) while the component lives: `isRecording`, `durationMillis`, `canRecord`, `url`,
+  `mediaServicesDidReset`, and `metering`, the level in decibels, when the options turn
+  `isMeteringEnabled` on. A change of up to 50 ms of duration, or up to 0.1 dB of level, both
+  included, is no change, as in `useAudioRecorderState`. The interval
   is in seconds, as `audioPlayer`'s `timeUpdate` is, where `useAudioRecorderState` takes
   milliseconds.
 

@@ -118,7 +118,7 @@ function forPlatform(options: RecordingOptions): Record<string, unknown> {
   return { ...common, ...options.web };
 }
 
-/** What `useAudioRecorderState` counts as no change: under 50 ms of duration, 0.1 dB of level. */
+/** What `useAudioRecorderState` counts as no change: up to 50 ms of duration and up to 0.1 dB of level, both included. */
 function sameStatus(a: RecorderState, b: RecorderState): boolean {
   const metering =
     a.metering === undefined || b.metering === undefined
