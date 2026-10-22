@@ -1,6 +1,6 @@
 {
   "name": "@ng-native/web-compat",
-  "version": "0.16.0",
+  "version": "0.17.1",
   "description": "Opt-in DOM compatibility for Angular Native, so component libraries written for the browser can render as native views.",
   "keywords": [
     "angular",
@@ -57,7 +57,7 @@
     "@angular/common": "^22.0.0",
     "@angular/core": "^22.0.0",
     "@ng-native/icons": "workspace:*",
-    "expo-document-picker": "^57.0.0",
+    "expo-document-picker": "^57.0.0 || ^58.0.0",
     "react-native-webview": ">=13.16.1"
   },
   "peerDependenciesMeta": {
@@ -101,6 +101,7 @@
   },
   "files": [
     "dist",
+    "before-modules.js",
     "build.cjs",
     "build.d.cts"
   ]
