@@ -39,6 +39,14 @@ import { setFrameView } from './frame-view.ts';
 import { keepTaken } from './node-members.ts';
 import { setSvg, stopChanged, svgInserted, svgNamed, wordsInSpans } from './svg.ts';
 import { styleShape } from './svg-box.ts';
+import {
+  columnsSpanned,
+  rowsSpanned,
+  spanColumns,
+  spanRows,
+  tableInserted,
+  tableRemoved,
+} from './table.ts';
 
 /** Markup that is an icon's drawing, as `@ng-icons/core` binds it to a `<template>`. */
 const ICON_MARKUP = /^\s*<svg[\s>]/i;
@@ -91,6 +99,16 @@ const SETTERS: Readonly<
     setChecked(node, on(value));
     engine.setProp(node, 'checked', on(value) ? '' : null);
     return true;
+  },
+  // A table cell across several columns, and one down several rows: see `table.ts`. Kept as
+  // the attribute too, which a library reads back.
+  colspan(node, value, engine) {
+    spanColumns(node, columnsSpanned(value), engine);
+    return false;
+  },
+  rowspan(node, value, engine) {
+    spanRows(node, rowsSpanned(value), engine);
+    return false;
   },
   hidden(node, value, engine) {
     engine.setProp(node, 'hidden', value === false ? null : value);
@@ -170,7 +188,8 @@ export const webListen: RendererExtension = {
     // A web view, or a document of its own: see `frame-view.ts` and `frame.ts`.
     frameCreated(node, engine);
   },
-  // What a select shows, and whether a field is in a disabled fieldset, follow where an option
+  // What a select shows, whether a field is in a disabled fieldset and a table's columns follow
+  // where an option, a field and a row or a cell
   // and a field are put: see `select.ts` and `fieldset.ts`. What a drawing's own elements are
   // given as they are put in it goes with them as the engine takes them out: see `svg.ts` and
   // `hearRemovals`.
@@ -180,9 +199,13 @@ export const webListen: RendererExtension = {
     if (node.tag === 'legend' && parent.tag === 'fieldset') fenceUnder(parent, engine);
     else fenceUnder(node, engine);
     svgInserted(node, parent, engine);
+    // A row or a cell: its table's columns are counted again. See `table.ts`.
+    tableInserted(node, engine);
   },
   removed(node, engine) {
     optionRemoved(node, engine);
+    // The table a row or a cell was in: see `table.ts`.
+    tableRemoved(node, engine);
   },
   set(node, name, value, engine) {
     // By the name HTML has it, as a template may write it in capitals.
@@ -198,7 +221,7 @@ export const webListen: RendererExtension = {
     // control's: both are kept as written as well.
     checkControl(node, name, value, engine);
     setLabel(node, name, value, engine);
-    const own = SETTERS[name];
+    const own = SETTERS[name] ?? SETTERS[attribute];
     // A canvas's size is the grid it draws on, and an attribute of a shape in a drawing is what
     // it draws: see `setCanvasSize` and `setSvg`.
     const took = own
