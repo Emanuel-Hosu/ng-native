@@ -55,7 +55,8 @@ export interface KeyboardSource {
   dismiss(): void;
   /**
    * How far below the top of the screen the window a view is measured in starts, in points, for
-   * a source that knows it is not zero. See `keyboardSource`.
+   * a source that knows it is not zero. Read when it is compared, as it changes with the status
+   * bar. See `keyboardSource`.
    */
   readonly windowTop?: number;
 }
@@ -98,7 +99,9 @@ export function keyboardSource(): KeyboardSource {
   const { Keyboard: keyboard, Platform } = native;
 
   return {
-    windowTop: windowTopOf(native),
+    get windowTop() {
+      return windowTopOf(native);
+    },
     subscribe: (listener) => {
       if (Platform?.OS !== 'ios') {
         const subscriptions = [
@@ -133,7 +136,12 @@ export function keyboardSource(): KeyboardSource {
  */
 function windowTopOf(native: ReactNative): number {
   if (native.Platform?.OS !== 'android' || edgeToEdgeFlag(native)) return 0;
-  return native.StatusBar?.currentHeight ?? 0;
+  // `StatusBar.currentHeight` is the bar's height when the app started. The module's own constant
+  // is read from the window's current insets on each call, as the inset `measureInWindow` leaves
+  // out is: after a rotation the two still agree.
+  const manager = native.TurboModuleRegistry?.get('StatusBarManager') as
+    { getConstants?(): { HEIGHT?: number } } | null | undefined;
+  return manager?.getConstants?.().HEIGHT ?? native.StatusBar?.currentHeight ?? 0;
 }
 
 /**
@@ -193,9 +201,12 @@ export class Keyboard {
   /**
    * How far below the top of the screen the window `measureInWindow` reports in starts: the status
    * bar's height on Android unless React Native's edge-to-edge flag is on, and zero otherwise. The
-   * keyboard's top edge in that window is `screenY` less this.
+   * keyboard's top edge in that window is `screenY` less this. It follows the window's insets,
+   * which change with a rotation, so read it when comparing rather than keeping it.
    */
-  readonly windowTop = this.source.windowTop ?? 0;
+  get windowTop(): number {
+    return this.source.windowTop ?? 0;
+  }
 
   /** Where the keyboard is now: at every frame of its motion where `followsMotion`. */
   readonly position: Signal<KeyboardMetrics> = computed(() => this.frame() ?? this.current());

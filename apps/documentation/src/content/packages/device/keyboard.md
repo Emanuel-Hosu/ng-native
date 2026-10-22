@@ -119,7 +119,8 @@ always the same place:
 - **iOS**: the window starts at the top of the screen, and `windowTop` is zero.
 - **Android**: when React Native's edge-to-edge flag is off, React Native measures from below the
   status bar, even in an app that draws under the bar. Expo Go draws under the bar with the flag
-  off. `windowTop` is then the status bar's height, and zero when the flag is on.
+  off. `windowTop` is then the status bar's height, and zero when the flag is on. It is read
+  from the window's current insets on each access, so it follows a rotation.
 
 Take `windowTop` off `screenY` to have the keyboard's top in the window a view was measured in.
 `<keyboard-avoiding-view>`, `<keyboard-dock>` and a `<text-input>` focused with the keyboard up

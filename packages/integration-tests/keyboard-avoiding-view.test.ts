@@ -300,7 +300,7 @@ describe('keyboard-avoiding-view under a navigation bar', () => {
   async function open(
     behavior: 'padding' | 'height',
     frame = { y: 116, height: 758 },
-    windowTop?: number,
+    windowTop?: number | (() => number),
   ) {
     let emit: (metrics: KeyboardMetrics) => void = () => {};
     const fabric = createFakeFabric();
@@ -311,7 +311,9 @@ describe('keyboard-avoiding-view under a navigation bar', () => {
           useValue: {
             subscribe: (fn: (m: KeyboardMetrics) => void) => ((emit = fn), () => {}),
             dismiss: () => {},
-            windowTop,
+            get windowTop() {
+              return typeof windowTop === 'function' ? windowTop() : windowTop;
+            },
           },
         },
       ],
@@ -354,6 +356,25 @@ describe('keyboard-avoiding-view under a navigation bar', () => {
 
     // The view's bottom is at 56 + 742 = 798 in the window, the keyboard's top at 474 - 34 = 440.
     assert.equal(avoider().props['paddingBottom'], 358);
+
+    app.applicationRef.destroy();
+  });
+
+  it('takes off the status bar as it is when the keyboard moves, not as it was at startup', async () => {
+    // The bar is 34 tall at startup and 24 once the phone has turned, and React Native measures
+    // with the inset it has now.
+    let inset = 34;
+    const { app, avoider, emit } = await open('padding', { y: 56, height: 742 }, () => inset);
+
+    emit({ height: 358, screenY: 474 });
+    await settle();
+    assert.equal(avoider().props['paddingBottom'], 358);
+
+    inset = 24;
+    emit({ height: 357, screenY: 474 });
+    await settle();
+    // The keyboard's top is at 474 - 24 = 450 in the window, 348 above the view's bottom at 798.
+    assert.equal(avoider().props['paddingBottom'], 348);
 
     app.applicationRef.destroy();
   });

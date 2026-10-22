@@ -124,7 +124,9 @@ export function nativeKeyboardSource(
     },
     dismiss: () => fallback.dismiss(),
     // The module's `screenY` is from the top of the screen as React Native's is.
-    windowTop: fallback.windowTop,
+    get windowTop() {
+      return fallback.windowTop;
+    },
   };
 }
 

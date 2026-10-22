@@ -317,6 +317,27 @@ describe('the keyboard source', () => {
     assert.equal(windowTop('android', true), 0, 'at the top of the screen, edge to edge');
     assert.equal(windowTop('ios', false), 0, 'iOS measures from where it reports the keyboard');
   });
+
+  it('reads the status bar inset again each time, as React Native measures with the current one', () => {
+    // StatusBar.currentHeight is the height at startup; the module's constant follows the bar
+    // being hidden or shown, and a rotation.
+    let height: number | undefined = 33.8;
+    const native = {
+      Platform: { OS: 'android' },
+      TurboModuleRegistry: {
+        get: (name: string) =>
+          name === 'StatusBarManager' ? { getConstants: () => ({ HEIGHT: height }) } : null,
+      },
+      StatusBar: { currentHeight: 33.8 },
+      Keyboard: { dismiss: () => {}, addListener: () => ({ remove: () => {} }) },
+    };
+    const source = withNative(native, () => keyboardSource());
+    assert.equal(source.windowTop, 33.8);
+    height = 0;
+    assert.equal(source.windowTop, 0, 'the bar hidden since');
+    height = 24;
+    assert.equal(source.windowTop, 24, 'rotated, with a shorter bar');
+  });
 });
 
 describe('the status bar source', () => {
